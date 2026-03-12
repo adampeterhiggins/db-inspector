@@ -122,7 +122,7 @@
       },
       {
         "command": "dbInspector.showObjectDDL",
-        "title": "Show Object DDL",
+        "title": "{} Show Object DDL",
         "icon": {
           "light": "media/commands/ddl-light.svg",
           "dark": "media/commands/ddl-dark.svg"
@@ -130,7 +130,7 @@
       },
       {
         "command": "dbInspector.previewTableData",
-        "title": "Preview Table Data",
+        "title": "[] Preview Table Data",
         "icon": {
           "light": "media/commands/preview-light.svg",
           "dark": "media/commands/preview-dark.svg"
@@ -138,7 +138,7 @@
       },
       {
         "command": "dbInspector.newQueryConsoleFromTable",
-        "title": "New Query Console",
+        "title": "> New Query Console",
         "icon": {
           "light": "media/commands/console-light.svg",
           "dark": "media/commands/console-dark.svg"
