@@ -2,7 +2,7 @@
   "name": "db-inspector",
   "displayName": "DB Inspector",
   "description": "DataGrip-like database explorer and query runner for VS Code",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -33,7 +33,7 @@
         {
           "id": "dbInspector",
           "title": "DB Inspector",
-          "icon": "media/database.svg"
+          "icon": "media/db-inspector-activity.svg"
         }
       ]
     },
@@ -48,7 +48,11 @@
     "commands": [
       {
         "command": "dbInspector.addConnection",
-        "title": "DB Inspector: Add Connection"
+        "title": "DB Inspector: Add Connection",
+        "icon": {
+          "light": "media/commands/add-light.svg",
+          "dark": "media/commands/add-dark.svg"
+        }
       },
       {
         "command": "dbInspector.editConnection",
@@ -68,11 +72,19 @@
       },
       {
         "command": "dbInspector.refresh",
-        "title": "DB Inspector: Refresh"
+        "title": "DB Inspector: Refresh",
+        "icon": {
+          "light": "media/commands/refresh-light.svg",
+          "dark": "media/commands/refresh-dark.svg"
+        }
       },
       {
         "command": "dbInspector.openQueryEditor",
-        "title": "DB Inspector: Open SQL Editor"
+        "title": "DB Inspector: Open SQL Editor",
+        "icon": {
+          "light": "media/commands/sql-light.svg",
+          "dark": "media/commands/sql-dark.svg"
+        }
       },
       {
         "command": "dbInspector.runQuery",
@@ -89,6 +101,11 @@
       {
         "command": "dbInspector.previewTableData",
         "title": "DB Inspector: Preview Table Data"
+      },
+      {
+        "command": "dbInspector.newQueryConsoleFromTable",
+        "title": "New Query Console",
+        "category": "DB Inspector"
       }
     ],
     "menus": {
@@ -96,17 +113,17 @@
         {
           "command": "dbInspector.addConnection",
           "when": "view == dbInspector.connectionsView",
-          "group": "navigation"
-        },
-        {
-          "command": "dbInspector.refresh",
-          "when": "view == dbInspector.connectionsView",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "dbInspector.openQueryEditor",
           "when": "view == dbInspector.connectionsView",
-          "group": "navigation"
+          "group": "navigation@2"
+        },
+        {
+          "command": "dbInspector.refresh",
+          "when": "view == dbInspector.connectionsView",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -139,6 +156,11 @@
           "command": "dbInspector.previewTableData",
           "when": "view == dbInspector.connectionsView && viewItem == dbInspector.table",
           "group": "inline"
+        },
+        {
+          "command": "dbInspector.newQueryConsoleFromTable",
+          "when": "view == dbInspector.connectionsView && viewItem == dbInspector.table",
+          "group": "navigation@1"
         },
         {
           "command": "dbInspector.showObjectDDL",

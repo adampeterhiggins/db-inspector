@@ -139,6 +139,27 @@ export function activate(context: vscode.ExtensionContext): void {
     refresh(connection.id);
   }
 
+  async function openQueryConsole(
+    connection: ConnectionProfile | undefined,
+    content: string,
+  ): Promise<vscode.TextDocument> {
+    const document = await vscode.workspace.openTextDocument({
+      language: 'sql',
+      content,
+    });
+
+    await vscode.window.showTextDocument(document, {
+      preview: false,
+    });
+
+    if (connection) {
+      queryContext.setCurrentConnection(connection.id);
+      queryContext.setConnectionForDocument(document, connection.id);
+    }
+
+    return document;
+  }
+
   context.subscriptions.push(
     vscode.commands.registerCommand('dbInspector.addConnection', async () => {
       const result = await promptForConnection();
@@ -258,19 +279,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ? `-- Connection: ${connection.name}\n-- Run with DB Inspector: Run Query\n\nSELECT 1;\n`
         : `-- Run with DB Inspector: Run Query\n\nSELECT 1;\n`;
 
-      const document = await vscode.workspace.openTextDocument({
-        language: 'sql',
-        content,
-      });
-
-      await vscode.window.showTextDocument(document, {
-        preview: false,
-      });
-
-      if (connection) {
-        queryContext.setCurrentConnection(connection.id);
-        queryContext.setConnectionForDocument(document, connection.id);
-      }
+      await openQueryConsole(connection, content);
     }),
 
     vscode.commands.registerCommand('dbInspector.runQuery', async () => {
@@ -339,6 +348,33 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
+    vscode.commands.registerCommand('dbInspector.newQueryConsoleFromTable', async (node?: ObjectNode) => {
+      if (!node || node.kind !== 'object' || node.objectType !== 'table') {
+        void vscode.window.showWarningMessage('Use this command from a table node in DB Inspector.');
+        return;
+      }
+
+      const connection = connectionStore.get(node.connectionId);
+      if (!connection) {
+        return;
+      }
+
+      const rowLimit = vscode.workspace.getConfiguration('dbInspector').get<number>('previewRowLimit', 200);
+      const qualifiedTableName = buildQualifiedTableName(connection, node.schema, node.objectName);
+      const content = [
+        `-- Connection: ${connection.name}`,
+        `-- Table: ${node.schema}.${node.objectName}`,
+        '-- Run with DB Inspector: Run Query',
+        '',
+        `SELECT *`,
+        `FROM ${qualifiedTableName}`,
+        `LIMIT ${rowLimit};`,
+        '',
+      ].join('\n');
+
+      await openQueryConsole(connection, content);
+    }),
+
     vscode.commands.registerCommand('dbInspector.showObjectDDL', async (node?: ObjectNode) => {
       if (!node || node.kind !== 'object') {
         void vscode.window.showWarningMessage('Use this command from a table, view, or function node.');
@@ -379,6 +415,22 @@ export async function deactivate(): Promise<void> {
     await activeConnectionManager.disconnectAll();
     activeConnectionManager = undefined;
   }
+}
+
+function buildQualifiedTableName(connection: ConnectionProfile, schema: string, table: string): string {
+  if (connection.dialect === 'mysql') {
+    return `${quoteIdentifierMysql(schema)}.${quoteIdentifierMysql(table)}`;
+  }
+
+  return `${quoteIdentifierAnsi(schema)}.${quoteIdentifierAnsi(table)}`;
+}
+
+function quoteIdentifierAnsi(identifier: string): string {
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+function quoteIdentifierMysql(identifier: string): string {
+  return `\`${identifier.replace(/`/g, '``')}\``;
 }
 
 async function promptForConnection(existing?: ConnectionProfile): Promise<PromptResult | undefined> {
