@@ -2,7 +2,7 @@
   "name": "db-inspector",
   "displayName": "DB Inspector",
   "description": "DataGrip-like database explorer and query runner for VS Code",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -50,7 +50,7 @@
     "commands": [
       {
         "command": "dbInspector.addConnection",
-        "title": "DB Inspector: Add Connection",
+        "title": "Add Connection",
         "icon": {
           "light": "media/commands/add-light.svg",
           "dark": "media/commands/add-dark.svg"
@@ -58,23 +58,23 @@
       },
       {
         "command": "dbInspector.editConnection",
-        "title": "DB Inspector: Edit Connection"
+        "title": "Edit Connection"
       },
       {
         "command": "dbInspector.deleteConnection",
-        "title": "DB Inspector: Delete Connection"
+        "title": "Delete Connection"
       },
       {
         "command": "dbInspector.connect",
-        "title": "DB Inspector: Connect"
+        "title": "Connect"
       },
       {
         "command": "dbInspector.disconnect",
-        "title": "DB Inspector: Disconnect"
+        "title": "Disconnect"
       },
       {
         "command": "dbInspector.refresh",
-        "title": "DB Inspector: Refresh",
+        "title": "Refresh",
         "icon": {
           "light": "media/commands/refresh-light.svg",
           "dark": "media/commands/refresh-dark.svg"
@@ -82,7 +82,7 @@
       },
       {
         "command": "dbInspector.openQueryEditor",
-        "title": "DB Inspector: Open SQL Editor",
+        "title": "Open SQL Editor",
         "icon": {
           "light": "media/commands/sql-light.svg",
           "dark": "media/commands/sql-dark.svg"
@@ -90,28 +90,27 @@
       },
       {
         "command": "dbInspector.runQuery",
-        "title": "DB Inspector: Run Query"
+        "title": "Run Query"
       },
       {
         "command": "dbInspector.runQueryRange",
-        "title": "DB Inspector: Run Query (Inline)"
+        "title": "Run Query (Inline)"
       },
       {
         "command": "dbInspector.useConnection",
-        "title": "DB Inspector: Use Connection"
+        "title": "Use Connection"
       },
       {
         "command": "dbInspector.showObjectDDL",
-        "title": "DB Inspector: Show Object DDL"
+        "title": "Show Object DDL"
       },
       {
         "command": "dbInspector.previewTableData",
-        "title": "DB Inspector: Preview Table Data"
+        "title": "Preview Table Data"
       },
       {
         "command": "dbInspector.newQueryConsoleFromTable",
-        "title": "New Query Console",
-        "category": "DB Inspector"
+        "title": "New Query Console"
       }
     ],
     "menus": {
@@ -136,17 +135,17 @@
         {
           "command": "dbInspector.connect",
           "when": "view == dbInspector.connectionsView && viewItem == dbInspector.connectionDisconnected",
-          "group": "inline"
+          "group": "navigation@1"
         },
         {
           "command": "dbInspector.disconnect",
           "when": "view == dbInspector.connectionsView && viewItem == dbInspector.connectionConnected",
-          "group": "inline"
+          "group": "navigation@1"
         },
         {
           "command": "dbInspector.useConnection",
           "when": "view == dbInspector.connectionsView && viewItem =~ /^dbInspector\\.connection/",
-          "group": "inline"
+          "group": "navigation@2"
         },
         {
           "command": "dbInspector.editConnection",
