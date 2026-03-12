@@ -2,7 +2,7 @@
   "name": "db-inspector",
   "displayName": "DB Inspector",
   "description": "DataGrip-like database explorer and query runner for VS Code",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "publisher": "local",
   "license": "MIT",
   "repository": {
