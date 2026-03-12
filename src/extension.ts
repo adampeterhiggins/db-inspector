@@ -12,6 +12,7 @@ import {
 import { DatabaseExplorerProvider } from './ui/databaseExplorerProvider';
 import { QueryContextManager } from './ui/queryContext';
 import { ResultsPanel } from './ui/resultsPanel';
+import { QueryRangeCommandArgs, SqlQueryCodeLensProvider } from './ui/sqlQueryCodeLensProvider';
 
 interface PromptResult {
   profile: Omit<ConnectionProfile, 'id' | 'hasPassword'>;
@@ -67,7 +68,12 @@ export function activate(context: vscode.ExtensionContext): void {
     showCollapseAll: true,
   });
 
-  context.subscriptions.push(treeView, queryContext);
+  const codeLensProvider = new SqlQueryCodeLensProvider(() =>
+    vscode.workspace.getConfiguration('dbInspector').get<boolean>('enableQueryCodeLens', true),
+  );
+  const codeLensRegistration = vscode.languages.registerCodeLensProvider({ language: 'sql' }, codeLensProvider);
+
+  context.subscriptions.push(treeView, queryContext, codeLensRegistration);
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
@@ -158,6 +164,36 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     return document;
+  }
+
+  async function executeSqlForDocument(document: vscode.TextDocument, sql: string): Promise<void> {
+    const trimmedSql = sql.trim();
+    if (!trimmedSql) {
+      void vscode.window.showWarningMessage('No SQL to run.');
+      return;
+    }
+
+    let connectionId = queryContext.getConnectionForDocument(document);
+    let connection = connectionId ? connectionStore.get(connectionId) : undefined;
+    if (!connection) {
+      connection = await chooseConnection({ placeholder: 'Select connection to run SQL against' });
+      if (!connection) {
+        return;
+      }
+
+      connectionId = connection.id;
+      queryContext.setConnectionForDocument(document, connectionId);
+      queryContext.setCurrentConnection(connectionId);
+    }
+
+    try {
+      await ensureConnected(connection);
+      const result = await connectionManager.execute(connection.id, trimmedSql);
+      resultsPanel.show(connection.name, trimmedSql, result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(`DB Inspector query failed: ${message}`);
+    }
   }
 
   context.subscriptions.push(
@@ -298,26 +334,26 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      let connectionId = queryContext.getConnectionForDocument(editor.document);
-      let connection = connectionId ? connectionStore.get(connectionId) : undefined;
-      if (!connection) {
-        connection = await chooseConnection({ placeholder: 'Select connection to run SQL against' });
-        if (!connection) {
-          return;
-        }
-        connectionId = connection.id;
-        queryContext.setConnectionForDocument(editor.document, connection.id);
-        queryContext.setCurrentConnection(connection.id);
+      await executeSqlForDocument(editor.document, sql);
+    }),
+
+    vscode.commands.registerCommand('dbInspector.runQueryRange', async (args?: QueryRangeCommandArgs) => {
+      if (!args?.uri) {
+        void vscode.window.showWarningMessage('DB Inspector: Missing query range context.');
+        return;
       }
 
-      try {
-        await ensureConnected(connection);
-        const result = await connectionManager.execute(connection.id, sql);
-        resultsPanel.show(connection.name, sql, result);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        void vscode.window.showErrorMessage(`DB Inspector query failed: ${message}`);
-      }
+      const uri = vscode.Uri.parse(args.uri);
+      const document =
+        vscode.workspace.textDocuments.find((item) => item.uri.toString() === args.uri) ??
+        (await vscode.workspace.openTextDocument(uri));
+
+      const fullText = document.getText();
+      const start = Math.max(0, Math.min(args.start, fullText.length));
+      const end = Math.max(start, Math.min(args.end, fullText.length));
+      const sql = fullText.slice(start, end);
+
+      await executeSqlForDocument(document, sql);
     }),
 
     vscode.commands.registerCommand('dbInspector.previewTableData', async (node?: ObjectNode) => {

@@ -7,6 +7,7 @@ DB Inspector brings a DataGrip-style database workflow into VS Code:
 - Deep table inspection (columns, indexes, constraints)
 - One-click table data preview in a result grid
 - SQL editor execution with per-document connection targeting
+- Inline `Run Query` buttons above SQL statements (CodeLens)
 - DDL viewer for tables/views/functions
 
 ## What is implemented
@@ -61,6 +62,7 @@ This produces a `.vsix` you can install manually.
 
 - `dbInspector.previewRowLimit` (default `200`)
 - `dbInspector.connectOnExpand` (default `true`)
+- `dbInspector.enableQueryCodeLens` (default `true`)
 
 ## Notes
 
