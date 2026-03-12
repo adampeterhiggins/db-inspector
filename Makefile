@@ -6,6 +6,7 @@ VSIX_NAME := db-inspector-$(VERSION).vsix
 CURSOR := cursor
 EXTENSION_ID := local.db-inspector
 FORCE ?= 0
+YES ?= 0
 
 .PHONY: install compile lint package vsix tag-version check-version ensure-version prepare-release cursor-install clean
 
@@ -64,13 +65,16 @@ ensure-version:
 		HIGHEST="$$(printf '%s\n%s\n' "$$CURRENT_VERSION" "$$LATEST_VERSION" | sort -V | tail -n 1)"; \
 		if [ "$$CURRENT_VERSION" = "$$LATEST_VERSION" ] || [ "$$HIGHEST" != "$$CURRENT_VERSION" ]; then \
 			NEXT_VERSION="$$(LATEST_VERSION="$$LATEST_VERSION" node -e 'const p=(process.env.LATEST_VERSION||"").split(".").map(Number); if (p.length < 3 || p.some(Number.isNaN)) { process.exit(1); } p[2] += 1; process.stdout.write(p.join("."));')"; \
-			if [ ! -t 0 ]; then \
+			if [ "$(YES)" = "1" ]; then \
+				CONFIRM="Y"; \
+			elif [ ! -t 0 ]; then \
 				echo "Version gate failed: package.json version ($$CURRENT_VERSION) is not greater than latest tag ($$LATEST_TAG)."; \
-				echo "Run in an interactive shell to auto-bump, bump manually, or use FORCE=1."; \
+				echo "Run in an interactive shell, pass YES=1 to auto-accept, bump manually, or use FORCE=1."; \
 				exit 1; \
+			else \
+				printf "package.json version ($$CURRENT_VERSION) is not greater than $$LATEST_TAG. Bump to $$NEXT_VERSION? [Y/n]: "; \
+				read -r CONFIRM; \
 			fi; \
-			printf "package.json version ($$CURRENT_VERSION) is not greater than $$LATEST_TAG. Bump to $$NEXT_VERSION? [Y/n]: "; \
-			read -r CONFIRM; \
 			if [ -z "$$CONFIRM" ] || [ "$$CONFIRM" = "y" ] || [ "$$CONFIRM" = "Y" ]; then \
 				npm version "$$NEXT_VERSION" --no-git-tag-version >/dev/null; \
 				echo "Updated package.json/package-lock.json to $$NEXT_VERSION"; \
@@ -90,7 +94,9 @@ prepare-release-%: check-version-%
 	@if [ -n "$$(git status --porcelain)" ]; then \
 		DEFAULT_MSG="$*"; \
 		INPUT_MSG=""; \
-		if [ -t 0 ]; then \
+		if [ "$(YES)" = "1" ]; then \
+			INPUT_MSG="$$DEFAULT_MSG"; \
+		elif [ -t 0 ]; then \
 			printf "Working tree is dirty. Commit message [$$DEFAULT_MSG]: "; \
 			read -r INPUT_MSG; \
 		fi; \
@@ -106,10 +112,10 @@ prepare-release-%: check-version-%
 
 cursor-install: ensure-version
 	@CURRENT_VERSION="$$(node -p 'require("./package.json").version')"; \
-	$(MAKE) cursor-install-$$CURRENT_VERSION FORCE=$(FORCE)
+	$(MAKE) cursor-install-$$CURRENT_VERSION FORCE=$(FORCE) YES=$(YES)
 
 cursor-install-%: prepare-release-%
-	@$(MAKE) db-inspector-$*.vsix
+	@$(MAKE) db-inspector-$*.vsix YES=$(YES) FORCE=$(FORCE)
 	@VSIX_FILE="db-inspector-$*.vsix"; \
 	EXPECTED_VERSION="$*"; \
 	$(CURSOR) --uninstall-extension "$(EXTENSION_ID)" >/dev/null 2>&1 || true; \
