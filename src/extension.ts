@@ -12,7 +12,11 @@ import {
 import { DatabaseExplorerProvider } from './ui/databaseExplorerProvider';
 import { QueryContextManager } from './ui/queryContext';
 import { ResultsPanel } from './ui/resultsPanel';
-import { QueryRangeCommandArgs, SqlQueryCodeLensProvider } from './ui/sqlQueryCodeLensProvider';
+import {
+  findStatementAtOffset,
+  QueryRangeCommandArgs,
+  SqlQueryCodeLensProvider,
+} from './ui/sqlQueryCodeLensProvider';
 
 interface PromptResult {
   profile: Omit<ConnectionProfile, 'id' | 'hasPassword'>;
@@ -352,6 +356,48 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       await executeSqlForDocument(editor.document, sql);
+    }),
+
+    vscode.commands.registerCommand('dbInspector.runQueryAtCursor', async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        void vscode.window.showWarningMessage('Open a SQL editor first.');
+        return;
+      }
+
+      const document = editor.document;
+      if (document.languageId !== 'sql') {
+        void vscode.window.showWarningMessage('Shift+Enter query execution is only available in SQL editors.');
+        return;
+      }
+
+      if (!editor.selection.isEmpty) {
+        const selectedSql = document.getText(editor.selection).trim();
+        if (!selectedSql) {
+          void vscode.window.showWarningMessage('Selected SQL is empty.');
+          return;
+        }
+
+        await executeSqlForDocument(document, selectedSql);
+        return;
+      }
+
+      const fullText = document.getText();
+      const cursorOffset = document.offsetAt(editor.selection.active);
+      const statement = findStatementAtOffset(fullText, cursorOffset);
+
+      if (!statement) {
+        void vscode.window.showWarningMessage('No SQL statement found at cursor.');
+        return;
+      }
+
+      const sql = fullText.slice(statement.start, statement.end).trim();
+      if (!sql) {
+        void vscode.window.showWarningMessage('No SQL statement found at cursor.');
+        return;
+      }
+
+      await executeSqlForDocument(document, sql);
     }),
 
     vscode.commands.registerCommand('dbInspector.runQueryRange', async (args?: QueryRangeCommandArgs) => {

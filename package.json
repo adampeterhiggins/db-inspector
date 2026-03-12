@@ -2,7 +2,7 @@
   "name": "db-inspector",
   "displayName": "DB Inspector",
   "description": "DataGrip-like database explorer and query runner for VS Code",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -24,6 +24,7 @@
     "onView:dbInspector.connectionsView",
     "onCommand:dbInspector.addConnection",
     "onCommand:dbInspector.runQuery",
+    "onCommand:dbInspector.runQueryAtCursor",
     "onCommand:dbInspector.openQueryEditor",
     "onCommand:dbInspector.runQueryRange",
     "onView:dbInspector.resultsView",
@@ -106,6 +107,10 @@
       {
         "command": "dbInspector.runQuery",
         "title": "Run Query"
+      },
+      {
+        "command": "dbInspector.runQueryAtCursor",
+        "title": "Run Query At Cursor"
       },
       {
         "command": "dbInspector.runQueryRange",
@@ -225,9 +230,20 @@
         {
           "command": "dbInspector.runQuery",
           "when": "editorTextFocus"
+        },
+        {
+          "command": "dbInspector.runQueryAtCursor",
+          "when": "editorTextFocus"
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "dbInspector.runQueryAtCursor",
+        "key": "shift+enter",
+        "when": "editorTextFocus && resourceLangId == sql && !editorReadonly"
+      }
+    ],
     "configuration": {
       "title": "DB Inspector",
       "properties": {

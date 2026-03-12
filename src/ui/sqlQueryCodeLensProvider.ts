@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-interface StatementRange {
+export interface StatementRange {
   start: number;
   end: number;
 }
@@ -43,7 +43,7 @@ export class SqlQueryCodeLensProvider implements vscode.CodeLensProvider {
   }
 }
 
-function getStatementRanges(sql: string): StatementRange[] {
+export function getStatementRanges(sql: string): StatementRange[] {
   const ranges: StatementRange[] = [];
 
   let startOffset: number | undefined;
@@ -143,8 +143,32 @@ function getStatementRanges(sql: string): StatementRange[] {
   return ranges;
 }
 
-function isMeaningfulSql(sql: string): boolean {
+export function isMeaningfulSql(sql: string): boolean {
   const withoutBlockComments = sql.replace(/\/\*[\s\S]*?\*\//g, ' ');
   const withoutLineComments = withoutBlockComments.replace(/^\s*--.*$/gm, ' ');
   return withoutLineComments.trim().length > 0;
+}
+
+export function findStatementAtOffset(sql: string, offset: number): StatementRange | undefined {
+  const ranges = getStatementRanges(sql).filter((range) => isMeaningfulSql(sql.slice(range.start, range.end)));
+  if (ranges.length === 0) {
+    return undefined;
+  }
+
+  const normalizedOffset = Math.max(0, Math.min(offset, sql.length));
+
+  let previous: StatementRange | undefined;
+  for (const range of ranges) {
+    if (normalizedOffset >= range.start && normalizedOffset <= range.end) {
+      return range;
+    }
+
+    if (normalizedOffset < range.start) {
+      return previous ?? range;
+    }
+
+    previous = range;
+  }
+
+  return previous;
 }
