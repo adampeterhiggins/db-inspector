@@ -157,29 +157,56 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             padding: 12px;
           }
 
-          .summary {
-            display: grid;
-            gap: 4px;
+          .menus {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
             margin-bottom: 10px;
-            color: var(--vscode-descriptionForeground);
-            font-size: 12px;
           }
 
-          .sql {
-            margin: 8px 0 12px;
+          details {
+            border: 1px solid var(--vscode-widget-border);
+            border-radius: 6px;
+            background: var(--vscode-editor-background);
+            min-width: 140px;
+          }
+
+          summary {
+            list-style: none;
+            cursor: pointer;
+            padding: 6px 10px;
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+          }
+
+          summary::-webkit-details-marker {
+            display: none;
+          }
+
+          .menu-content {
+            padding: 0 10px 10px;
+            color: var(--vscode-descriptionForeground);
+            font-size: 12px;
+            display: grid;
+            gap: 4px;
+          }
+
+          .query-content {
+            margin: 0 10px 10px;
             background: var(--vscode-textCodeBlock-background);
             border-radius: 6px;
             padding: 10px;
             white-space: pre-wrap;
             word-break: break-word;
             border: 1px solid var(--vscode-widget-border);
+            font-size: 12px;
           }
 
           .table-container {
             border: 1px solid var(--vscode-widget-border);
             border-radius: 6px;
             overflow: auto;
-            max-height: calc(100vh - 190px);
+            max-height: calc(100vh - 130px);
           }
 
           table {
@@ -226,13 +253,21 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         </style>
       </head>
       <body>
-        <div class="summary">
-          <div><strong>Connection:</strong> ${escapeHtml(connectionName)}</div>
-          <div><strong>Rows:</strong> ${result.rowCount}</div>
-          <div><strong>Duration:</strong> ${result.durationMs} ms</div>
-          ${result.message ? `<div><strong>Message:</strong> ${escapeHtml(result.message)}</div>` : ''}
+        <div class="menus">
+          <details>
+            <summary>Status</summary>
+            <div class="menu-content">
+              <div><strong>Connection:</strong> ${escapeHtml(connectionName)}</div>
+              <div><strong>Rows:</strong> ${result.rowCount}</div>
+              <div><strong>Duration:</strong> ${result.durationMs} ms</div>
+              ${result.message ? `<div><strong>Message:</strong> ${escapeHtml(result.message)}</div>` : ''}
+            </div>
+          </details>
+          <details>
+            <summary>Query</summary>
+            <div class="query-content">${escapeHtml(sql.trim())}</div>
+          </details>
         </div>
-        <div class="sql">${escapeHtml(sql.trim())}</div>
         ${body}
       </body>
       </html>
