@@ -35,6 +35,8 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
 
   private view: vscode.WebviewView | undefined;
   private latest: RenderState | undefined;
+  private showStatus = false;
+  private showQuery = false;
 
   async show(connectionName: string, sql: string, result: QueryExecutionResult): Promise<void> {
     this.latest = {
@@ -63,6 +65,16 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
       }
     });
 
+    this.render();
+  }
+
+  toggleStatus(): void {
+    this.showStatus = !this.showStatus;
+    this.render();
+  }
+
+  toggleQuery(): void {
+    this.showQuery = !this.showQuery;
     this.render();
   }
 
@@ -139,6 +151,25 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
       `
       : `<p class="empty">${escapeHtml(result.message ?? 'Statement completed.')}</p>`;
 
+    const statusBlock = this.showStatus
+      ? `
+        <div class="status-strip">
+          <span><strong>Connection:</strong> ${escapeHtml(connectionName)}</span>
+          <span><strong>Rows:</strong> ${result.rowCount}</span>
+          <span><strong>Duration:</strong> ${result.durationMs} ms</span>
+          ${result.message ? `<span><strong>Message:</strong> ${escapeHtml(result.message)}</span>` : ''}
+        </div>
+      `
+      : '';
+
+    const queryBlock = this.showQuery
+      ? `
+        <div class="query-block">
+          <pre>${escapeHtml(sql.trim())}</pre>
+        </div>
+      `
+      : '';
+
     return `
       <!DOCTYPE html>
       <html lang="en">
@@ -157,49 +188,32 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             padding: 12px;
           }
 
-          .menus {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
+          .status-strip {
             margin-bottom: 10px;
-          }
-
-          details {
             border: 1px solid var(--vscode-widget-border);
             border-radius: 6px;
             background: var(--vscode-editor-background);
-            min-width: 140px;
-          }
-
-          summary {
-            list-style: none;
-            cursor: pointer;
-            padding: 6px 10px;
-            font-size: 12px;
-            color: var(--vscode-descriptionForeground);
-          }
-
-          summary::-webkit-details-marker {
-            display: none;
-          }
-
-          .menu-content {
-            padding: 0 10px 10px;
+            padding: 8px 10px;
             color: var(--vscode-descriptionForeground);
             font-size: 12px;
-            display: grid;
-            gap: 4px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
           }
 
-          .query-content {
-            margin: 0 10px 10px;
-            background: var(--vscode-textCodeBlock-background);
+          .query-block {
+            border: 1px solid var(--vscode-widget-border);
             border-radius: 6px;
+            background: var(--vscode-textCodeBlock-background);
             padding: 10px;
+            margin-bottom: 10px;
+            font-size: 12px;
+          }
+
+          .query-block pre {
+            margin: 0;
             white-space: pre-wrap;
             word-break: break-word;
-            border: 1px solid var(--vscode-widget-border);
-            font-size: 12px;
           }
 
           .table-container {
@@ -253,21 +267,8 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         </style>
       </head>
       <body>
-        <div class="menus">
-          <details>
-            <summary>Status</summary>
-            <div class="menu-content">
-              <div><strong>Connection:</strong> ${escapeHtml(connectionName)}</div>
-              <div><strong>Rows:</strong> ${result.rowCount}</div>
-              <div><strong>Duration:</strong> ${result.durationMs} ms</div>
-              ${result.message ? `<div><strong>Message:</strong> ${escapeHtml(result.message)}</div>` : ''}
-            </div>
-          </details>
-          <details>
-            <summary>Query</summary>
-            <div class="query-content">${escapeHtml(sql.trim())}</div>
-          </details>
-        </div>
+        ${statusBlock}
+        ${queryBlock}
         ${body}
       </body>
       </html>

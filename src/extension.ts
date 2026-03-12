@@ -294,6 +294,14 @@ export function activate(context: vscode.ExtensionContext): void {
       refresh();
     }),
 
+    vscode.commands.registerCommand('dbInspector.toggleResultsStatus', async () => {
+      resultsPanel.toggleStatus();
+    }),
+
+    vscode.commands.registerCommand('dbInspector.toggleResultsQuery', async () => {
+      resultsPanel.toggleQuery();
+    }),
+
     vscode.commands.registerCommand('dbInspector.useConnection', async (node?: ExplorerNode) => {
       const connection = await resolveConnectionFromNode(node);
       if (!connection) {

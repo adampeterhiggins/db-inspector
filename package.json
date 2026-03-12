@@ -2,7 +2,7 @@
   "name": "db-inspector",
   "displayName": "DB Inspector",
   "description": "DataGrip-like database explorer and query runner for VS Code",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -112,6 +112,22 @@
         "title": "Run Query (Inline)"
       },
       {
+        "command": "dbInspector.toggleResultsStatus",
+        "title": "Toggle Status",
+        "icon": {
+          "light": "media/commands/status-light.svg",
+          "dark": "media/commands/status-dark.svg"
+        }
+      },
+      {
+        "command": "dbInspector.toggleResultsQuery",
+        "title": "Toggle Query",
+        "icon": {
+          "light": "media/commands/query-light.svg",
+          "dark": "media/commands/query-dark.svg"
+        }
+      },
+      {
         "command": "dbInspector.useConnection",
         "title": "Use Connection"
       },
@@ -144,6 +160,16 @@
           "command": "dbInspector.refresh",
           "when": "view == dbInspector.connectionsView",
           "group": "navigation@3"
+        },
+        {
+          "command": "dbInspector.toggleResultsStatus",
+          "when": "view == dbInspector.resultsView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbInspector.toggleResultsQuery",
+          "when": "view == dbInspector.resultsView",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
