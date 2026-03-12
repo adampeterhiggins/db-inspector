@@ -2,7 +2,7 @@
   "name": "db-inspector",
   "displayName": "DB Inspector",
   "description": "DataGrip-like database explorer and query runner for VS Code",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -58,19 +58,35 @@
       },
       {
         "command": "dbInspector.editConnection",
-        "title": "Edit Connection"
+        "title": "Edit Connection",
+        "icon": {
+          "light": "media/commands/edit-light.svg",
+          "dark": "media/commands/edit-dark.svg"
+        }
       },
       {
         "command": "dbInspector.deleteConnection",
-        "title": "Delete Connection"
+        "title": "Delete Connection",
+        "icon": {
+          "light": "media/commands/delete-light.svg",
+          "dark": "media/commands/delete-dark.svg"
+        }
       },
       {
         "command": "dbInspector.connect",
-        "title": "Connect"
+        "title": "Connect",
+        "icon": {
+          "light": "media/commands/connect-light.svg",
+          "dark": "media/commands/connect-dark.svg"
+        }
       },
       {
         "command": "dbInspector.disconnect",
-        "title": "Disconnect"
+        "title": "Disconnect",
+        "icon": {
+          "light": "media/commands/disconnect-light.svg",
+          "dark": "media/commands/disconnect-dark.svg"
+        }
       },
       {
         "command": "dbInspector.refresh",
@@ -98,19 +114,35 @@
       },
       {
         "command": "dbInspector.useConnection",
-        "title": "Use Connection"
+        "title": "Use Connection",
+        "icon": {
+          "light": "media/commands/use-light.svg",
+          "dark": "media/commands/use-dark.svg"
+        }
       },
       {
         "command": "dbInspector.showObjectDDL",
-        "title": "Show Object DDL"
+        "title": "Show Object DDL",
+        "icon": {
+          "light": "media/commands/ddl-light.svg",
+          "dark": "media/commands/ddl-dark.svg"
+        }
       },
       {
         "command": "dbInspector.previewTableData",
-        "title": "Preview Table Data"
+        "title": "Preview Table Data",
+        "icon": {
+          "light": "media/commands/preview-light.svg",
+          "dark": "media/commands/preview-dark.svg"
+        }
       },
       {
         "command": "dbInspector.newQueryConsoleFromTable",
-        "title": "New Query Console"
+        "title": "New Query Console",
+        "icon": {
+          "light": "media/commands/console-light.svg",
+          "dark": "media/commands/console-dark.svg"
+        }
       }
     ],
     "menus": {
