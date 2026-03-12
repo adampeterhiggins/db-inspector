@@ -30,7 +30,7 @@ DB Inspector brings a DataGrip-style database workflow into VS Code:
   - Active selection, or
   - Entire SQL document when nothing is selected
 - Active connection shown in status bar (`DB: ...`)
-- Results open in a side webview table with row count and duration
+- Results open in a dedicated Query Results panel (dockable in VS Code bottom panel)
 
 ### Inspection workflow
 

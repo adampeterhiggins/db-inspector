@@ -61,7 +61,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const explorerProvider = new DatabaseExplorerProvider(connectionStore, connectionManager);
   const queryContext = new QueryContextManager(() => connectionStore.list(), context);
-  const resultsPanel = new ResultsPanel(context.extensionUri);
+  const resultsPanel = new ResultsPanel();
 
   const treeView = vscode.window.createTreeView('dbInspector.connectionsView', {
     treeDataProvider: explorerProvider,
@@ -72,8 +72,17 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.getConfiguration('dbInspector').get<boolean>('enableQueryCodeLens', true),
   );
   const codeLensRegistration = vscode.languages.registerCodeLensProvider({ language: 'sql' }, codeLensProvider);
+  const resultsViewRegistration = vscode.window.registerWebviewViewProvider(
+    ResultsPanel.viewId,
+    resultsPanel,
+    {
+      webviewOptions: {
+        retainContextWhenHidden: true,
+      },
+    },
+  );
 
-  context.subscriptions.push(treeView, queryContext, codeLensRegistration);
+  context.subscriptions.push(treeView, queryContext, codeLensRegistration, resultsViewRegistration);
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
@@ -189,7 +198,7 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       await ensureConnected(connection);
       const result = await connectionManager.execute(connection.id, trimmedSql);
-      resultsPanel.show(connection.name, trimmedSql, result);
+      await resultsPanel.show(connection.name, trimmedSql, result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       void vscode.window.showErrorMessage(`DB Inspector query failed: ${message}`);
@@ -377,7 +386,7 @@ export function activate(context: vscode.ExtensionContext): void {
           rowLimit,
         );
         const sql = `SELECT * FROM ${node.schema}.${node.objectName} LIMIT ${rowLimit};`;
-        resultsPanel.show(connection.name, sql, result);
+        await resultsPanel.show(connection.name, sql, result);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         void vscode.window.showErrorMessage(`DB Inspector preview failed: ${message}`);
