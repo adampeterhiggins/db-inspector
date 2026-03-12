@@ -182,10 +182,22 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             color-scheme: light dark;
           }
 
+          * {
+            box-sizing: border-box;
+          }
+
+          html,
           body {
             margin: 0;
             font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
             padding: 12px;
+            height: 100vh;
+          }
+
+          body {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
           }
 
           .status-strip {
@@ -220,7 +232,8 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             border: 1px solid var(--vscode-widget-border);
             border-radius: 6px;
             overflow: auto;
-            max-height: calc(100vh - 130px);
+            flex: 1;
+            min-height: 0;
           }
 
           table {
