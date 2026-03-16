@@ -65,7 +65,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const explorerProvider = new DatabaseExplorerProvider(connectionStore, connectionManager);
   const queryContext = new QueryContextManager(() => connectionStore.list(), context);
-  const resultsPanel = new ResultsPanel();
+  const resultsPanel = new ResultsPanel({
+    onRunSandboxQuery: async (sql) => {
+      await executeSql(sql);
+    },
+    getCurrentConnectionName: () => {
+      const currentConnectionId = queryContext.getCurrentConnectionId();
+      if (!currentConnectionId) {
+        return undefined;
+      }
+
+      return connectionStore.get(currentConnectionId)?.name;
+    },
+  });
 
   const treeView = vscode.window.createTreeView('dbInspector.connectionsView', {
     treeDataProvider: explorerProvider,
@@ -179,24 +191,34 @@ export function activate(context: vscode.ExtensionContext): void {
     return document;
   }
 
-  async function executeSqlForDocument(document: vscode.TextDocument, sql: string): Promise<void> {
+  async function executeSql(sql: string, document?: vscode.TextDocument): Promise<void> {
     const trimmedSql = sql.trim();
     if (!trimmedSql) {
       void vscode.window.showWarningMessage('No SQL to run.');
       return;
     }
 
-    let connectionId = queryContext.getConnectionForDocument(document);
+    let connectionId = document
+      ? queryContext.getConnectionForDocument(document)
+      : queryContext.getCurrentConnectionId();
     let connection = connectionId ? connectionStore.get(connectionId) : undefined;
     if (!connection) {
-      connection = await chooseConnection({ placeholder: 'Select connection to run SQL against' });
+      connection = await chooseConnection({
+        placeholder: document
+          ? 'Select connection to run SQL against'
+          : 'Select connection to run sandbox SQL against',
+      });
       if (!connection) {
         return;
       }
 
       connectionId = connection.id;
-      queryContext.setConnectionForDocument(document, connectionId);
-      queryContext.setCurrentConnection(connectionId);
+    }
+
+    const resolvedConnectionId = connection.id;
+    queryContext.setCurrentConnection(resolvedConnectionId);
+    if (document) {
+      queryContext.setConnectionForDocument(document, resolvedConnectionId);
     }
 
     try {
@@ -355,7 +377,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      await executeSqlForDocument(editor.document, sql);
+      await executeSql(sql, editor.document);
     }),
 
     vscode.commands.registerCommand('dbInspector.runQueryAtCursor', async () => {
@@ -378,7 +400,7 @@ export function activate(context: vscode.ExtensionContext): void {
           return;
         }
 
-        await executeSqlForDocument(document, selectedSql);
+        await executeSql(selectedSql, document);
         return;
       }
 
@@ -397,7 +419,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      await executeSqlForDocument(document, sql);
+      await executeSql(sql, document);
     }),
 
     vscode.commands.registerCommand('dbInspector.runQueryRange', async (args?: QueryRangeCommandArgs) => {
@@ -416,7 +438,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const end = Math.max(start, Math.min(args.end, fullText.length));
       const sql = fullText.slice(start, end);
 
-      await executeSqlForDocument(document, sql);
+      await executeSql(sql, document);
     }),
 
     vscode.commands.registerCommand('dbInspector.previewTableData', async (node?: ObjectNode) => {

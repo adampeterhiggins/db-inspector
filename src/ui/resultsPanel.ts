@@ -29,6 +29,16 @@ interface RenderState {
   result: QueryExecutionResult;
 }
 
+interface ResultsPanelMessage {
+  type: 'runSandboxQuery';
+  sql?: unknown;
+}
+
+interface ResultsPanelOptions {
+  onRunSandboxQuery: (sql: string) => Promise<void>;
+  getCurrentConnectionName: () => string | undefined;
+}
+
 export class ResultsPanel implements vscode.WebviewViewProvider {
   static readonly viewId = 'dbInspector.resultsView';
   static readonly panelContainerCommand = 'workbench.view.extension.dbInspectorResults';
@@ -37,6 +47,8 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
   private latest: RenderState | undefined;
   private showStatus = false;
   private showQuery = false;
+
+  constructor(private readonly options: ResultsPanelOptions) {}
 
   async show(connectionName: string, sql: string, result: QueryExecutionResult): Promise<void> {
     this.latest = {
@@ -58,6 +70,14 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
+    this.view.webview.options = {
+      enableScripts: true,
+      enableCommandUris: true,
+    };
+
+    this.view.webview.onDidReceiveMessage((message: ResultsPanelMessage) => {
+      void this.onDidReceiveMessage(message);
+    });
 
     this.view.onDidDispose(() => {
       if (this.view === webviewView) {
@@ -78,6 +98,20 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
     this.render();
   }
 
+  private async onDidReceiveMessage(message: ResultsPanelMessage): Promise<void> {
+    if (message?.type !== 'runSandboxQuery') {
+      return;
+    }
+
+    const sql = typeof message.sql === 'string' ? message.sql.trim() : '';
+    if (!sql) {
+      void vscode.window.showWarningMessage('No SQL to run.');
+      return;
+    }
+
+    await this.options.onRunSandboxQuery(sql);
+  }
+
   private render(): void {
     if (!this.view) {
       return;
@@ -96,6 +130,11 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
   }
 
   private renderEmptyHtml(): string {
+    const connectionName = this.options.getCurrentConnectionName();
+    const connectionLabel = connectionName
+      ? `Active connection: <strong>${escapeHtml(connectionName)}</strong>`
+      : 'No active connection. You can still run SQL and choose a connection.';
+
     return `
       <!DOCTYPE html>
       <html lang="en">
@@ -103,21 +142,118 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <style>
+          :root {
+            color-scheme: light dark;
+          }
+
+          * {
+            box-sizing: border-box;
+          }
+
+          html,
           body {
             margin: 0;
             padding: 16px;
-            font-family: var(--vscode-font-family);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
             color: var(--vscode-foreground);
+            height: 100%;
+          }
+
+          body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+          }
+
+          .card {
+            border: 1px solid var(--vscode-widget-border);
+            border-radius: 6px;
+            background: var(--vscode-editor-background);
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
           }
 
           .hint {
             color: var(--vscode-descriptionForeground);
-            font-style: italic;
+            font-size: 12px;
+            line-height: 1.4;
+          }
+
+          textarea {
+            width: 100%;
+            min-height: 108px;
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            padding: 8px;
+            font-family: inherit;
+            resize: vertical;
+          }
+
+          .actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+          }
+
+          button {
+            border: none;
+            border-radius: 4px;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            padding: 6px 12px;
+            cursor: pointer;
+            font-family: inherit;
+          }
+
+          button:hover {
+            background: var(--vscode-button-hoverBackground);
+          }
+
+          .secondary {
+            color: var(--vscode-descriptionForeground);
+            text-decoration: none;
+            font-size: 12px;
+          }
+
+          .secondary:hover {
+            text-decoration: underline;
           }
         </style>
       </head>
       <body>
-        <div class="hint">Run a SQL query to show results here.</div>
+        <div class="card">
+          <div class="hint">Run a SQL query to show results here.</div>
+          <div class="hint">${connectionLabel}</div>
+          <textarea id="sandbox-query" spellcheck="false" placeholder="SELECT 1;"></textarea>
+          <div class="actions">
+            <button id="run-query" type="button">Run Query</button>
+            <a class="secondary" href="command:dbInspector.openQueryEditor">Open SQL Editor</a>
+          </div>
+        </div>
+        <script>
+          const vscode = acquireVsCodeApi();
+          const input = document.getElementById('sandbox-query');
+          const runButton = document.getElementById('run-query');
+          const run = () => {
+            vscode.postMessage({
+              type: 'runSandboxQuery',
+              sql: input.value
+            });
+          };
+
+          runButton.addEventListener('click', run);
+          input.addEventListener('keydown', (event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+              event.preventDefault();
+              run();
+            }
+          });
+        </script>
       </body>
       </html>
     `;
