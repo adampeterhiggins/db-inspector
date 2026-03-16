@@ -42,6 +42,7 @@ interface ResultsPanelOptions {
 export class ResultsPanel implements vscode.WebviewViewProvider {
   static readonly viewId = 'dbInspector.resultsView';
   static readonly panelContainerCommand = 'workbench.view.extension.dbInspectorResults';
+  private static readonly hasResultsContextKey = 'dbInspector.resultsHasData';
 
   private view: vscode.WebviewView | undefined;
   private latest: RenderState | undefined;
@@ -65,6 +66,12 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
       () => undefined,
     );
 
+    this.render();
+  }
+
+  clear(): void {
+    this.latest = undefined;
+    this.updateHasResultsContext(false);
     this.render();
   }
 
@@ -113,6 +120,8 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
   }
 
   private render(): void {
+    this.updateHasResultsContext(Boolean(this.latest));
+
     if (!this.view) {
       return;
     }
@@ -127,6 +136,10 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
       this.latest.sql,
       this.latest.result,
     );
+  }
+
+  private updateHasResultsContext(hasResults: boolean): void {
+    void vscode.commands.executeCommand('setContext', ResultsPanel.hasResultsContextKey, hasResults);
   }
 
   private renderEmptyHtml(): string {

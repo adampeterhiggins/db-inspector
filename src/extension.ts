@@ -17,6 +17,7 @@ import {
   QueryRangeCommandArgs,
   SqlQueryCodeLensProvider,
 } from './ui/sqlQueryCodeLensProvider';
+import { renderSqlTemplateIfNeeded } from './ui/sqlTemplate';
 
 interface PromptResult {
   profile: Omit<ConnectionProfile, 'id' | 'hasPassword'>;
@@ -192,7 +193,12 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   async function executeSql(sql: string, document?: vscode.TextDocument): Promise<void> {
-    const trimmedSql = sql.trim();
+    const templatedSql = await renderSqlTemplateIfNeeded(sql);
+    if (templatedSql === undefined) {
+      return;
+    }
+
+    const trimmedSql = templatedSql.trim();
     if (!trimmedSql) {
       void vscode.window.showWarningMessage('No SQL to run.');
       return;
@@ -326,6 +332,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand('dbInspector.toggleResultsQuery', async () => {
       resultsPanel.toggleQuery();
+    }),
+
+    vscode.commands.registerCommand('dbInspector.clearResults', async () => {
+      resultsPanel.clear();
     }),
 
     vscode.commands.registerCommand('dbInspector.useConnection', async (node?: ExplorerNode) => {

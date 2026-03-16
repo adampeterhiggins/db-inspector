@@ -2,7 +2,7 @@
   "name": "db-inspector",
   "displayName": "DB Inspector",
   "description": "DataGrip-like database explorer and query runner for VS Code",
-  "version": "0.0.19",
+  "version": "0.0.20",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -133,6 +133,14 @@
         }
       },
       {
+        "command": "dbInspector.clearResults",
+        "title": "Clear Results",
+        "icon": {
+          "light": "media/commands/clear-light.svg",
+          "dark": "media/commands/clear-dark.svg"
+        }
+      },
+      {
         "command": "dbInspector.useConnection",
         "title": "Use Connection"
       },
@@ -175,6 +183,11 @@
           "command": "dbInspector.toggleResultsQuery",
           "when": "view == dbInspector.resultsView",
           "group": "navigation@2"
+        },
+        {
+          "command": "dbInspector.clearResults",
+          "when": "view == dbInspector.resultsView && dbInspector.resultsHasData",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -281,6 +294,7 @@
   },
   "dependencies": {
     "mysql2": "^3.14.0",
+    "nunjucks": "^3.2.4",
     "pg": "^8.14.1",
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.7"
