@@ -75,6 +75,10 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
     this.render();
   }
 
+  getLatest(): RenderState | undefined {
+    return this.latest;
+  }
+
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
     this.view.webview.options = {

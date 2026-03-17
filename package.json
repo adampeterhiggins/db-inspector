@@ -2,7 +2,7 @@
   "name": "db-inspector",
   "displayName": "DB Inspector",
   "description": "DataGrip-like database explorer and query runner for VS Code",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -117,6 +117,22 @@
         "title": "Run Query (Inline)"
       },
       {
+        "command": "dbInspector.copyResultsToClipboard",
+        "title": "Copy Results",
+        "icon": {
+          "light": "media/commands/copy-light.svg",
+          "dark": "media/commands/copy-dark.svg"
+        }
+      },
+      {
+        "command": "dbInspector.downloadResults",
+        "title": "Download Results",
+        "icon": {
+          "light": "media/commands/download-light.svg",
+          "dark": "media/commands/download-dark.svg"
+        }
+      },
+      {
         "command": "dbInspector.toggleResultsStatus",
         "title": "Toggle Status",
         "icon": {
@@ -177,17 +193,27 @@
         {
           "command": "dbInspector.toggleResultsStatus",
           "when": "view == dbInspector.resultsView",
-          "group": "navigation@1"
+          "group": "navigation@3"
         },
         {
           "command": "dbInspector.toggleResultsQuery",
           "when": "view == dbInspector.resultsView",
-          "group": "navigation@2"
+          "group": "navigation@4"
         },
         {
           "command": "dbInspector.clearResults",
           "when": "view == dbInspector.resultsView && dbInspector.resultsHasData",
-          "group": "navigation@3"
+          "group": "navigation@5"
+        },
+        {
+          "command": "dbInspector.copyResultsToClipboard",
+          "when": "view == dbInspector.resultsView && dbInspector.resultsHasData",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbInspector.downloadResults",
+          "when": "view == dbInspector.resultsView && dbInspector.resultsHasData",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [

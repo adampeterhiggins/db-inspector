@@ -1,3 +1,4 @@
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ConnectionManager } from './db/connectionManager';
@@ -8,6 +9,7 @@ import {
   DbDialect,
   ExplorerNode,
   ObjectNode,
+  QueryExecutionResult,
 } from './types';
 import { DatabaseExplorerProvider } from './ui/databaseExplorerProvider';
 import { QueryContextManager } from './ui/queryContext';
@@ -338,6 +340,60 @@ export function activate(context: vscode.ExtensionContext): void {
       resultsPanel.clear();
     }),
 
+    vscode.commands.registerCommand('dbInspector.copyResultsToClipboard', async () => {
+      const latest = resultsPanel.getLatest();
+      if (!latest) {
+        void vscode.window.showWarningMessage('No query results to copy.');
+        return;
+      }
+
+      try {
+        const content = serializeResultAsCsv(latest.result);
+        await vscode.env.clipboard.writeText(content);
+        void vscode.window.showInformationMessage('DB Inspector: Copied query results to clipboard.');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`DB Inspector copy failed: ${message}`);
+      }
+    }),
+
+    vscode.commands.registerCommand('dbInspector.downloadResults', async () => {
+      const latest = resultsPanel.getLatest();
+      if (!latest) {
+        void vscode.window.showWarningMessage('No query results to download.');
+        return;
+      }
+
+      const hasTabularResults = latest.result.columns.length > 0;
+      const extension = hasTabularResults ? 'csv' : 'txt';
+      const serialized = hasTabularResults
+        ? serializeResultAsCsv(latest.result)
+        : latest.result.message ?? 'Statement completed.';
+
+      const timestamp = createFileTimestamp(new Date());
+      const defaultName = `db-results-${timestamp}.${extension}`;
+      const defaultDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+      const destination = await vscode.window.showSaveDialog({
+        title: 'Save DB Results',
+        defaultUri: vscode.Uri.file(path.join(defaultDir, defaultName)),
+        filters: hasTabularResults
+          ? { 'CSV Files': ['csv'], 'All Files': ['*'] }
+          : { 'Text Files': ['txt'], 'All Files': ['*'] },
+      });
+
+      if (!destination) {
+        return;
+      }
+
+      try {
+        await fs.writeFile(destination.fsPath, serialized, 'utf8');
+        void vscode.window.showInformationMessage(`DB Inspector: Saved query results to ${path.basename(destination.fsPath)}.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`DB Inspector download failed: ${message}`);
+      }
+    }),
+
     vscode.commands.registerCommand('dbInspector.useConnection', async (node?: ExplorerNode) => {
       const connection = await resolveConnectionFromNode(node);
       if (!connection) {
@@ -562,6 +618,51 @@ function quoteIdentifierAnsi(identifier: string): string {
 
 function quoteIdentifierMysql(identifier: string): string {
   return `\`${identifier.replace(/`/g, '``')}\``;
+}
+
+function serializeResultAsCsv(result: QueryExecutionResult): string {
+  if (result.columns.length === 0) {
+    return result.message ?? 'Statement completed.';
+  }
+
+  const header = result.columns.map((column) => escapeCsvCell(column)).join(',');
+  const rows = result.rows.map((row) =>
+    result.columns
+      .map((column) => {
+        const rawValue = (row as Record<string, unknown>)[column];
+        if (rawValue === null || rawValue === undefined) {
+          return '';
+        }
+        if (typeof rawValue === 'object') {
+          return escapeCsvCell(JSON.stringify(rawValue));
+        }
+        return escapeCsvCell(String(rawValue));
+      })
+      .join(','),
+  );
+
+  return [header, ...rows].join('\n');
+}
+
+function escapeCsvCell(value: string): string {
+  const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (/[",\n]/.test(normalized)) {
+    return `"${normalized.replace(/"/g, '""')}"`;
+  }
+  return normalized;
+}
+
+function createFileTimestamp(date: Date): string {
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    '-',
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds()),
+  ].join('');
 }
 
 async function promptForConnection(existing?: ConnectionProfile): Promise<PromptResult | undefined> {
