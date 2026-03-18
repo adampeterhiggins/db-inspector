@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { ConnectionManager } from './db/connectionManager';
 import { ConnectionStore, PasswordMode } from './store/connectionStore';
 import {
+  ColumnInfo,
   ConnectionProfile,
   ConnectionNode,
   DbDialect,
@@ -41,6 +42,19 @@ interface CompletionContext {
   prefix: string;
   qualifier?: string;
   tableContext: boolean;
+  statementSql: string;
+}
+
+interface ParsedTableReference {
+  schema?: string;
+  table: string;
+  alias?: string;
+}
+
+interface ResolvedTableReference {
+  schema: string;
+  table: string;
+  alias?: string;
 }
 
 const SQL_KEYWORDS = [
@@ -126,6 +140,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const explorerProvider = new DatabaseExplorerProvider(connectionStore, connectionManager);
   const queryContext = new QueryContextManager(() => connectionStore.list(), context);
   const completionCatalogCache = new Map<string, { loadedAt: number; catalog: CompletionCatalog }>();
+  const completionColumnsCache = new Map<string, { loadedAt: number; columns: ColumnInfo[] }>();
   const resultsPanel = new ResultsPanel({
     onRunSandboxQuery: async (sql) => {
       await executeSql(sql);
@@ -177,8 +192,14 @@ export function activate(context: vscode.ExtensionContext): void {
   const refresh = (connectionId?: string): void => {
     if (connectionId) {
       completionCatalogCache.delete(connectionId);
+      for (const key of [...completionColumnsCache.keys()]) {
+        if (key.startsWith(`${connectionId}::`)) {
+          completionColumnsCache.delete(key);
+        }
+      }
     } else {
       completionCatalogCache.clear();
+      completionColumnsCache.clear();
     }
     explorerProvider.refresh(connectionId);
     queryContext.onActiveEditorChanged(vscode.window.activeTextEditor);
@@ -335,6 +356,56 @@ export function activate(context: vscode.ExtensionContext): void {
       });
     };
 
+    const connectionId = queryContext.getCurrentConnectionId();
+    const connection = connectionId ? connectionStore.get(connectionId) : undefined;
+    const connected = Boolean(connection && connectionManager.isConnected(connection.id));
+
+    const cachedCatalog = connection ? completionCatalogCache.get(connection.id)?.catalog : undefined;
+    const catalog = connection
+      ? connected
+        ? await getOrLoadCompletionCatalog(connection)
+        : cachedCatalog
+      : undefined;
+
+    const parsedTables = parseTableReferences(contextInfo.statementSql);
+    const resolvedTables = catalog ? resolveTableReferences(parsedTables, catalog) : [];
+
+    let columnSuggestions: Array<{ table: ResolvedTableReference; column: ColumnInfo }> = [];
+    if (connection && resolvedTables.length > 0) {
+      columnSuggestions = await getColumnsForResolvedTables(connection, resolvedTables, connected);
+    }
+
+    const qualifier = contextInfo.qualifier?.toLowerCase();
+    if (qualifier) {
+      for (const suggestion of columnSuggestions) {
+        const alias = suggestion.table.alias?.toLowerCase();
+        const tableName = suggestion.table.table.toLowerCase();
+        if (alias !== qualifier && tableName !== qualifier) {
+          continue;
+        }
+
+        addCandidate(
+          {
+            label: suggestion.column.name,
+            detail: `${suggestion.table.alias ?? suggestion.table.table} column`,
+            insertText: suggestion.column.name,
+          },
+          -1,
+        );
+      }
+    } else {
+      for (const suggestion of columnSuggestions) {
+        addCandidate(
+          {
+            label: suggestion.column.name,
+            detail: `${suggestion.table.alias ?? suggestion.table.table} column`,
+            insertText: suggestion.column.name,
+          },
+          contextInfo.tableContext ? 2 : -1,
+        );
+      }
+    }
+
     if (!contextInfo.qualifier) {
       for (const keyword of SQL_KEYWORDS) {
         addCandidate(
@@ -343,21 +414,11 @@ export function activate(context: vscode.ExtensionContext): void {
             detail: 'keyword',
             insertText: `${keyword} `,
           },
-          3,
+          4,
         );
       }
     }
 
-    const connectionId = queryContext.getCurrentConnectionId();
-    const connection = connectionId ? connectionStore.get(connectionId) : undefined;
-    if (!connection) {
-      return rankAndLimitCompletions(candidates);
-    }
-
-    const cachedCatalog = completionCatalogCache.get(connection.id)?.catalog;
-    const catalog = connectionManager.isConnected(connection.id)
-      ? await getOrLoadCompletionCatalog(connection)
-      : cachedCatalog;
     if (!catalog) {
       return rankAndLimitCompletions(candidates);
     }
@@ -384,7 +445,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     for (const object of catalog.objects) {
-      if (contextInfo.qualifier && object.schema !== contextInfo.qualifier) {
+      if (contextInfo.qualifier && object.schema.toLowerCase() !== contextInfo.qualifier) {
         continue;
       }
 
@@ -412,6 +473,34 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     return rankAndLimitCompletions(candidates);
+  }
+
+  async function getColumnsForResolvedTables(
+    connection: ConnectionProfile,
+    resolvedTables: ResolvedTableReference[],
+    connected: boolean,
+  ): Promise<Array<{ table: ResolvedTableReference; column: ColumnInfo }>> {
+    const uniqueTables = new Map<string, ResolvedTableReference>();
+    for (const table of resolvedTables) {
+      uniqueTables.set(`${table.schema}.${table.table}`, table);
+    }
+
+    const results: Array<{ table: ResolvedTableReference; column: ColumnInfo }> = [];
+    for (const table of uniqueTables.values()) {
+      const columns = await getOrLoadTableColumns(connection, table.schema, table.table, connected);
+      if (!columns) {
+        continue;
+      }
+
+      for (const column of columns) {
+        results.push({
+          table,
+          column,
+        });
+      }
+    }
+
+    return results;
   }
 
   async function getOrLoadCompletionCatalog(connection: ConnectionProfile): Promise<CompletionCatalog | undefined> {
@@ -469,6 +558,36 @@ export function activate(context: vscode.ExtensionContext): void {
       return catalog;
     } catch {
       return undefined;
+    }
+  }
+
+  async function getOrLoadTableColumns(
+    connection: ConnectionProfile,
+    schema: string,
+    table: string,
+    connected: boolean,
+  ): Promise<ColumnInfo[] | undefined> {
+    const cacheKey = `${connection.id}::${schema}::${table}`;
+    const cacheEntry = completionColumnsCache.get(cacheKey);
+    const now = Date.now();
+
+    if (cacheEntry && now - cacheEntry.loadedAt < 30_000) {
+      return cacheEntry.columns;
+    }
+
+    if (!connected) {
+      return cacheEntry?.columns;
+    }
+
+    try {
+      const columns = await connectionManager.getTableColumns(connection.id, schema, table);
+      completionColumnsCache.set(cacheKey, {
+        loadedAt: now,
+        columns,
+      });
+      return columns;
+    } catch {
+      return cacheEntry?.columns;
     }
   }
 
@@ -900,13 +1019,17 @@ function createFileTimestamp(date: Date): string {
 
 function deriveCompletionContext(sql: string, cursor: number): CompletionContext {
   const safeCursor = Math.max(0, Math.min(cursor, sql.length));
-  const before = sql.slice(0, safeCursor);
+  const statement = findStatementAtOffset(sql, safeCursor);
+  const statementStart = statement?.start ?? 0;
+  const statementSql = sql.slice(statementStart, safeCursor);
+  const before = statementSql;
   const qualifierMatch = before.match(/([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z0-9_]*)$/);
   if (qualifierMatch) {
     return {
-      qualifier: qualifierMatch[1],
+      qualifier: qualifierMatch[1]?.toLowerCase(),
       prefix: qualifierMatch[2] ?? '',
       tableContext: true,
+      statementSql,
     };
   }
 
@@ -917,7 +1040,89 @@ function deriveCompletionContext(sql: string, cursor: number): CompletionContext
   return {
     prefix,
     tableContext,
+    statementSql,
   };
+}
+
+function parseTableReferences(sql: string): ParsedTableReference[] {
+  const references: ParsedTableReference[] = [];
+  const regex =
+    /(?:from|join|update|into)\s+([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?(?:\s+(?:as\s+)?([A-Za-z_][A-Za-z0-9_]*))?/gi;
+  const reservedAliases = new Set([
+    'where',
+    'join',
+    'left',
+    'right',
+    'inner',
+    'full',
+    'on',
+    'group',
+    'order',
+    'limit',
+    'offset',
+    'having',
+    'union',
+  ]);
+
+  for (const match of sql.matchAll(regex)) {
+    const first = match[1];
+    const second = match[2];
+    const aliasRaw = match[3];
+    const alias = aliasRaw && !reservedAliases.has(aliasRaw.toLowerCase()) ? aliasRaw : undefined;
+
+    if (second) {
+      references.push({
+        schema: first.toLowerCase(),
+        table: second.toLowerCase(),
+        alias: alias?.toLowerCase(),
+      });
+      continue;
+    }
+
+    references.push({
+      table: first.toLowerCase(),
+      alias: alias?.toLowerCase(),
+    });
+  }
+
+  return references;
+}
+
+function resolveTableReferences(
+  parsed: ParsedTableReference[],
+  catalog: CompletionCatalog,
+): ResolvedTableReference[] {
+  const resolved: ResolvedTableReference[] = [];
+
+  for (const item of parsed) {
+    if (item.schema) {
+      if (catalog.objects.some((object) => object.schema.toLowerCase() === item.schema && object.name.toLowerCase() === item.table)) {
+        resolved.push({
+          schema: item.schema,
+          table: item.table,
+          alias: item.alias,
+        });
+      }
+      continue;
+    }
+
+    const matchingObjects = catalog.objects.filter((object) => object.name.toLowerCase() === item.table);
+    for (const object of matchingObjects) {
+      resolved.push({
+        schema: object.schema.toLowerCase(),
+        table: object.name.toLowerCase(),
+        alias: item.alias,
+      });
+    }
+  }
+
+  const deduped = new Map<string, ResolvedTableReference>();
+  for (const item of resolved) {
+    const key = `${item.schema}.${item.table}.${item.alias ?? ''}`;
+    deduped.set(key, item);
+  }
+
+  return [...deduped.values()];
 }
 
 function rankAndLimitCompletions(
