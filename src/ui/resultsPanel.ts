@@ -29,13 +29,29 @@ interface RenderState {
   result: QueryExecutionResult;
 }
 
-interface ResultsPanelMessage {
+interface RunSandboxQueryMessage {
   type: 'runSandboxQuery';
   sql?: unknown;
 }
 
+interface RequestCompletionsMessage {
+  type: 'requestCompletions';
+  requestId?: unknown;
+  sql?: unknown;
+  cursor?: unknown;
+}
+
+type ResultsPanelMessage = RunSandboxQueryMessage | RequestCompletionsMessage;
+
+export interface SandboxCompletionItem {
+  label: string;
+  detail?: string;
+  insertText: string;
+}
+
 interface ResultsPanelOptions {
   onRunSandboxQuery: (sql: string) => Promise<void>;
+  onRequestCompletions: (sql: string, cursor: number) => Promise<SandboxCompletionItem[]>;
   getCurrentConnectionName: () => string | undefined;
 }
 
@@ -110,17 +126,44 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
   }
 
   private async onDidReceiveMessage(message: ResultsPanelMessage): Promise<void> {
-    if (message?.type !== 'runSandboxQuery') {
+    if (message?.type === 'runSandboxQuery') {
+      const sql = typeof message.sql === 'string' ? message.sql.trim() : '';
+      if (!sql) {
+        void vscode.window.showWarningMessage('No SQL to run.');
+        return;
+      }
+
+      await this.options.onRunSandboxQuery(sql);
       return;
     }
 
-    const sql = typeof message.sql === 'string' ? message.sql.trim() : '';
-    if (!sql) {
-      void vscode.window.showWarningMessage('No SQL to run.');
+    if (message?.type !== 'requestCompletions') {
       return;
     }
 
-    await this.options.onRunSandboxQuery(sql);
+    const requestId = typeof message.requestId === 'number' ? message.requestId : undefined;
+    if (requestId === undefined || !this.view) {
+      return;
+    }
+
+    const sql = typeof message.sql === 'string' ? message.sql : '';
+    const rawCursor = typeof message.cursor === 'number' ? message.cursor : sql.length;
+    const cursor = Math.max(0, Math.min(sql.length, rawCursor));
+
+    try {
+      const items = await this.options.onRequestCompletions(sql, cursor);
+      await this.view.webview.postMessage({
+        type: 'completions',
+        requestId,
+        items,
+      });
+    } catch {
+      await this.view.webview.postMessage({
+        type: 'completions',
+        requestId,
+        items: [],
+      });
+    }
   }
 
   private render(): void {
@@ -217,6 +260,64 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             flex-wrap: wrap;
           }
 
+          .editor-wrap {
+            position: relative;
+          }
+
+          .autocomplete-menu {
+            position: absolute;
+            left: 0;
+            right: auto;
+            top: calc(100% + 4px);
+            min-width: 360px;
+            max-width: min(680px, 92vw);
+            max-height: 220px;
+            overflow: auto;
+            border: 1px solid var(--vscode-widget-border);
+            border-radius: 6px;
+            background: var(--vscode-editorWidget-background);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+            z-index: 20;
+            display: none;
+          }
+
+          .autocomplete-menu.visible {
+            display: block;
+          }
+
+          .autocomplete-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            width: 100%;
+            border: none;
+            border-bottom: 1px solid var(--vscode-editorWidget-border);
+            background: transparent;
+            color: var(--vscode-foreground);
+            font-family: inherit;
+            text-align: left;
+            padding: 6px 10px;
+            cursor: pointer;
+          }
+
+          .autocomplete-item:last-child {
+            border-bottom: none;
+          }
+
+          .autocomplete-item.active {
+            background: var(--vscode-list-activeSelectionBackground);
+            color: var(--vscode-list-activeSelectionForeground);
+          }
+
+          .autocomplete-detail {
+            color: var(--vscode-descriptionForeground);
+            font-size: 11px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
           button {
             border: none;
             border-radius: 4px;
@@ -246,7 +347,10 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         <div class="card">
           <div class="hint">Run a SQL query to show results here.</div>
           <div class="hint">${connectionLabel}</div>
-          <textarea id="sandbox-query" spellcheck="false" placeholder="SELECT 1;"></textarea>
+          <div class="editor-wrap">
+            <textarea id="sandbox-query" spellcheck="false" placeholder="SELECT 1;"></textarea>
+            <div id="autocomplete-menu" class="autocomplete-menu"></div>
+          </div>
           <div class="actions">
             <button id="run-query" type="button">Run Query</button>
             <a class="secondary" href="command:dbInspector.openQueryEditor">Open SQL Editor</a>
@@ -256,6 +360,75 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
           const vscode = acquireVsCodeApi();
           const input = document.getElementById('sandbox-query');
           const runButton = document.getElementById('run-query');
+          const menu = document.getElementById('autocomplete-menu');
+          let completionItems = [];
+          let selectedCompletionIndex = 0;
+          let completionRequestId = 0;
+          let latestCompletionRequestId = 0;
+          let completionTimer;
+
+          const closeCompletions = () => {
+            completionItems = [];
+            selectedCompletionIndex = 0;
+            menu.classList.remove('visible');
+            menu.innerHTML = '';
+          };
+
+          const currentPrefixRange = () => {
+            const cursor = input.selectionStart ?? 0;
+            let start = cursor;
+            while (start > 0 && /[A-Za-z0-9_]/.test(input.value[start - 1])) {
+              start -= 1;
+            }
+            return { start, end: cursor };
+          };
+
+          const applyCompletion = (item) => {
+            const range = currentPrefixRange();
+            const before = input.value.slice(0, range.start);
+            const after = input.value.slice(range.end);
+            input.value = before + item.insertText + after;
+            const newCursor = before.length + item.insertText.length;
+            input.focus();
+            input.selectionStart = newCursor;
+            input.selectionEnd = newCursor;
+            closeCompletions();
+          };
+
+          const renderCompletions = () => {
+            if (!completionItems.length) {
+              closeCompletions();
+              return;
+            }
+
+            menu.innerHTML = completionItems
+              .map((item, index) => {
+                const activeClass = index === selectedCompletionIndex ? 'active' : '';
+                const detail = item.detail ? '<span class="autocomplete-detail">' + item.detail + '</span>' : '';
+                return '<button type="button" class="autocomplete-item ' + activeClass + '" data-index="' + index + '"><span>' + item.label + '</span>' + detail + '</button>';
+              })
+              .join('');
+
+            menu.classList.add('visible');
+          };
+
+          const requestCompletions = () => {
+            const cursor = input.selectionStart ?? input.value.length;
+            completionRequestId += 1;
+            latestCompletionRequestId = completionRequestId;
+            vscode.postMessage({
+              type: 'requestCompletions',
+              requestId: completionRequestId,
+              sql: input.value,
+              cursor
+            });
+          };
+
+          const scheduleCompletions = (delay = 120) => {
+            clearTimeout(completionTimer);
+            completionTimer = setTimeout(requestCompletions, delay);
+          };
+
           const run = () => {
             vscode.postMessage({
               type: 'runSandboxQuery',
@@ -264,11 +437,86 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
           };
 
           runButton.addEventListener('click', run);
+          input.addEventListener('input', () => {
+            scheduleCompletions();
+          });
           input.addEventListener('keydown', (event) => {
+            if (menu.classList.contains('visible')) {
+              if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                selectedCompletionIndex = (selectedCompletionIndex + 1) % completionItems.length;
+                renderCompletions();
+                return;
+              }
+
+              if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                selectedCompletionIndex =
+                  (selectedCompletionIndex - 1 + completionItems.length) % completionItems.length;
+                renderCompletions();
+                return;
+              }
+
+              if (event.key === 'Enter' || event.key === 'Tab') {
+                event.preventDefault();
+                applyCompletion(completionItems[selectedCompletionIndex]);
+                return;
+              }
+
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                closeCompletions();
+                return;
+              }
+            }
+
             if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
               event.preventDefault();
               run();
+              return;
             }
+
+            if ((event.metaKey || event.ctrlKey) && event.key === ' ') {
+              event.preventDefault();
+              requestCompletions();
+            }
+          });
+
+          input.addEventListener('blur', () => {
+            setTimeout(() => closeCompletions(), 120);
+          });
+
+          input.addEventListener('focus', () => {
+            scheduleCompletions(60);
+          });
+
+          menu.addEventListener('mousedown', (event) => {
+            const target = event.target.closest('.autocomplete-item');
+            if (!target) {
+              return;
+            }
+
+            event.preventDefault();
+            const index = Number(target.dataset.index);
+            if (!Number.isInteger(index) || !completionItems[index]) {
+              return;
+            }
+
+            applyCompletion(completionItems[index]);
+          });
+
+          window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (!data || data.type !== 'completions') {
+              return;
+            }
+            if (data.requestId !== latestCompletionRequestId) {
+              return;
+            }
+
+            completionItems = Array.isArray(data.items) ? data.items : [];
+            selectedCompletionIndex = 0;
+            renderCompletions();
           });
         </script>
       </body>
