@@ -43,6 +43,9 @@ interface CompletionContext {
   qualifier?: string;
   tableContext: boolean;
   statementSql: string;
+  inStringLiteral: boolean;
+  inComment: boolean;
+  valueContext: boolean;
 }
 
 interface ParsedTableReference {
@@ -326,6 +329,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
   async function getSandboxCompletions(sql: string, cursor: number): Promise<SandboxCompletionItem[]> {
     const contextInfo = deriveCompletionContext(sql, cursor);
+    if (contextInfo.inStringLiteral || contextInfo.inComment || contextInfo.valueContext) {
+      return [];
+    }
+
     const prefix = contextInfo.prefix.toLowerCase();
     const candidates: Array<SandboxCompletionItem & { sortWeight: number; matchWeight: number }> = [];
     const seen = new Set<string>();
@@ -1055,6 +1062,8 @@ function deriveCompletionContext(sql: string, cursor: number): CompletionContext
   const statementStart = statement?.start ?? 0;
   const statementSql = sql.slice(statementStart, safeCursor);
   const before = statementSql;
+  const lexical = analyzeSqlLexicalContext(before);
+  const valueContext = /(?:=|<>|!=|<=|>=|<|>|like|ilike)\s*(?:[A-Za-z0-9_-]*)$/i.test(before);
   const qualifierMatch = before.match(/([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z0-9_]*)$/);
   if (qualifierMatch) {
     return {
@@ -1062,6 +1071,9 @@ function deriveCompletionContext(sql: string, cursor: number): CompletionContext
       prefix: qualifierMatch[2] ?? '',
       tableContext: true,
       statementSql,
+      inStringLiteral: lexical.inStringLiteral,
+      inComment: lexical.inComment,
+      valueContext: false,
     };
   }
 
@@ -1073,6 +1085,79 @@ function deriveCompletionContext(sql: string, cursor: number): CompletionContext
     prefix,
     tableContext,
     statementSql,
+    inStringLiteral: lexical.inStringLiteral,
+    inComment: lexical.inComment,
+    valueContext: valueContext && !lexical.inStringLiteral && !tableContext,
+  };
+}
+
+function analyzeSqlLexicalContext(before: string): { inStringLiteral: boolean; inComment: boolean } {
+  let inSingle = false;
+  let inDouble = false;
+  let inBacktick = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = 0; index < before.length; index += 1) {
+    const current = before[index];
+    const next = before[index + 1];
+
+    if (inLineComment) {
+      if (current === '\n') {
+        inLineComment = false;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (current === '*' && next === '/') {
+        inBlockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+
+    if (!inSingle && !inDouble && !inBacktick) {
+      if (current === '-' && next === '-') {
+        inLineComment = true;
+        index += 1;
+        continue;
+      }
+
+      if (current === '/' && next === '*') {
+        inBlockComment = true;
+        index += 1;
+        continue;
+      }
+    }
+
+    if (!inDouble && !inBacktick && current === "'") {
+      if (inSingle && next === "'") {
+        index += 1;
+        continue;
+      }
+      inSingle = !inSingle;
+      continue;
+    }
+
+    if (!inSingle && !inBacktick && current === '"') {
+      if (inDouble && next === '"') {
+        index += 1;
+        continue;
+      }
+      inDouble = !inDouble;
+      continue;
+    }
+
+    if (!inSingle && !inDouble && current === '`') {
+      inBacktick = !inBacktick;
+      continue;
+    }
+  }
+
+  return {
+    inStringLiteral: inSingle || inDouble || inBacktick,
+    inComment: inLineComment || inBlockComment,
   };
 }
 
