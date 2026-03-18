@@ -13,7 +13,7 @@ import {
 } from './types';
 import { DatabaseExplorerProvider } from './ui/databaseExplorerProvider';
 import { QueryContextManager } from './ui/queryContext';
-import { ResultsPanel } from './ui/resultsPanel';
+import { ResultsPanel, SandboxCompletionItem } from './ui/resultsPanel';
 import {
   findStatementAtOffset,
   QueryRangeCommandArgs,
@@ -25,6 +25,63 @@ interface PromptResult {
   profile: Omit<ConnectionProfile, 'id' | 'hasPassword'>;
   passwordMode: PasswordMode;
 }
+
+interface CatalogObject {
+  schema: string;
+  name: string;
+  kind: 'table' | 'view' | 'function';
+}
+
+interface CompletionCatalog {
+  schemas: string[];
+  objects: CatalogObject[];
+}
+
+interface CompletionContext {
+  prefix: string;
+  qualifier?: string;
+  tableContext: boolean;
+}
+
+const SQL_KEYWORDS = [
+  'SELECT',
+  'FROM',
+  'WHERE',
+  'GROUP BY',
+  'ORDER BY',
+  'LIMIT',
+  'OFFSET',
+  'JOIN',
+  'LEFT JOIN',
+  'RIGHT JOIN',
+  'INNER JOIN',
+  'FULL JOIN',
+  'ON',
+  'WITH',
+  'AS',
+  'INSERT INTO',
+  'VALUES',
+  'UPDATE',
+  'SET',
+  'DELETE',
+  'CREATE TABLE',
+  'ALTER TABLE',
+  'DROP TABLE',
+  'CREATE VIEW',
+  'UNION',
+  'UNION ALL',
+  'DISTINCT',
+  'AND',
+  'OR',
+  'NOT',
+  'IN',
+  'EXISTS',
+  'CASE',
+  'WHEN',
+  'THEN',
+  'ELSE',
+  'END',
+];
 
 let activeConnectionManager: ConnectionManager | undefined;
 
@@ -68,10 +125,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const explorerProvider = new DatabaseExplorerProvider(connectionStore, connectionManager);
   const queryContext = new QueryContextManager(() => connectionStore.list(), context);
+  const completionCatalogCache = new Map<string, { loadedAt: number; catalog: CompletionCatalog }>();
   const resultsPanel = new ResultsPanel({
     onRunSandboxQuery: async (sql) => {
       await executeSql(sql);
     },
+    onRequestCompletions: async (sql, cursor) => getSandboxCompletions(sql, cursor),
     getCurrentConnectionName: () => {
       const currentConnectionId = queryContext.getCurrentConnectionId();
       if (!currentConnectionId) {
@@ -116,6 +175,11 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const refresh = (connectionId?: string): void => {
+    if (connectionId) {
+      completionCatalogCache.delete(connectionId);
+    } else {
+      completionCatalogCache.clear();
+    }
     explorerProvider.refresh(connectionId);
     queryContext.onActiveEditorChanged(vscode.window.activeTextEditor);
   };
@@ -236,6 +300,175 @@ export function activate(context: vscode.ExtensionContext): void {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       void vscode.window.showErrorMessage(`DB Inspector query failed: ${message}`);
+    }
+  }
+
+  async function getSandboxCompletions(sql: string, cursor: number): Promise<SandboxCompletionItem[]> {
+    const contextInfo = deriveCompletionContext(sql, cursor);
+    const prefix = contextInfo.prefix.toLowerCase();
+    const candidates: Array<SandboxCompletionItem & { sortWeight: number; matchWeight: number }> = [];
+    const seen = new Set<string>();
+
+    const addCandidate = (
+      item: SandboxCompletionItem,
+      sortWeight: number,
+      matchBase = item.label,
+    ): void => {
+      const key = `${item.label}::${item.insertText}::${item.detail ?? ''}`;
+      if (seen.has(key)) {
+        return;
+      }
+
+      const lower = matchBase.toLowerCase();
+      if (prefix) {
+        if (!lower.includes(prefix)) {
+          return;
+        }
+      }
+
+      const matchWeight = !prefix ? 2 : lower.startsWith(prefix) ? 0 : 1;
+      seen.add(key);
+      candidates.push({
+        ...item,
+        sortWeight,
+        matchWeight,
+      });
+    };
+
+    if (!contextInfo.qualifier) {
+      for (const keyword of SQL_KEYWORDS) {
+        addCandidate(
+          {
+            label: keyword,
+            detail: 'keyword',
+            insertText: `${keyword} `,
+          },
+          3,
+        );
+      }
+    }
+
+    const connectionId = queryContext.getCurrentConnectionId();
+    const connection = connectionId ? connectionStore.get(connectionId) : undefined;
+    if (!connection) {
+      return rankAndLimitCompletions(candidates);
+    }
+
+    const cachedCatalog = completionCatalogCache.get(connection.id)?.catalog;
+    const catalog = connectionManager.isConnected(connection.id)
+      ? await getOrLoadCompletionCatalog(connection)
+      : cachedCatalog;
+    if (!catalog) {
+      return rankAndLimitCompletions(candidates);
+    }
+
+    for (const schema of catalog.schemas) {
+      addCandidate(
+        {
+          label: schema,
+          detail: 'schema',
+          insertText: schema,
+        },
+        0,
+      );
+
+      addCandidate(
+        {
+          label: `${schema}.`,
+          detail: 'schema',
+          insertText: `${schema}.`,
+        },
+        0,
+        schema,
+      );
+    }
+
+    for (const object of catalog.objects) {
+      if (contextInfo.qualifier && object.schema !== contextInfo.qualifier) {
+        continue;
+      }
+
+      const objectPriority = object.kind === 'table' ? 0 : object.kind === 'view' ? 1 : 2;
+      addCandidate(
+        {
+          label: object.name,
+          detail: `${object.schema} ${object.kind}`,
+          insertText: object.name,
+        },
+        objectPriority,
+      );
+
+      if (!contextInfo.qualifier || contextInfo.tableContext) {
+        addCandidate(
+          {
+            label: `${object.schema}.${object.name}`,
+            detail: object.kind,
+            insertText: `${object.schema}.${object.name}`,
+          },
+          objectPriority + 1,
+          object.name,
+        );
+      }
+    }
+
+    return rankAndLimitCompletions(candidates);
+  }
+
+  async function getOrLoadCompletionCatalog(connection: ConnectionProfile): Promise<CompletionCatalog | undefined> {
+    const cacheEntry = completionCatalogCache.get(connection.id);
+    const now = Date.now();
+    if (cacheEntry && now - cacheEntry.loadedAt < 30_000) {
+      return cacheEntry.catalog;
+    }
+
+    try {
+      const schemas = await connectionManager.listSchemas(connection.id);
+      const limitedSchemas = schemas.slice(0, 80);
+      const schemaObjects = await Promise.all(
+        limitedSchemas.map(async (schema) => ({
+          schema,
+          objects: await connectionManager.listSchemaObjects(connection.id, schema),
+        })),
+      );
+
+      const catalog: CompletionCatalog = {
+        schemas,
+        objects: [],
+      };
+
+      for (const schemaEntry of schemaObjects) {
+        for (const table of schemaEntry.objects.tables) {
+          catalog.objects.push({
+            schema: schemaEntry.schema,
+            name: table,
+            kind: 'table',
+          });
+        }
+
+        for (const view of schemaEntry.objects.views) {
+          catalog.objects.push({
+            schema: schemaEntry.schema,
+            name: view,
+            kind: 'view',
+          });
+        }
+
+        for (const fn of schemaEntry.objects.functions) {
+          catalog.objects.push({
+            schema: schemaEntry.schema,
+            name: fn,
+            kind: 'function',
+          });
+        }
+      }
+
+      completionCatalogCache.set(connection.id, {
+        loadedAt: now,
+        catalog,
+      });
+      return catalog;
+    } catch {
+      return undefined;
     }
   }
 
@@ -663,6 +896,49 @@ function createFileTimestamp(date: Date): string {
     pad(date.getMinutes()),
     pad(date.getSeconds()),
   ].join('');
+}
+
+function deriveCompletionContext(sql: string, cursor: number): CompletionContext {
+  const safeCursor = Math.max(0, Math.min(cursor, sql.length));
+  const before = sql.slice(0, safeCursor);
+  const qualifierMatch = before.match(/([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z0-9_]*)$/);
+  if (qualifierMatch) {
+    return {
+      qualifier: qualifierMatch[1],
+      prefix: qualifierMatch[2] ?? '',
+      tableContext: true,
+    };
+  }
+
+  const prefixMatch = before.match(/([A-Za-z0-9_]*)$/);
+  const prefix = prefixMatch?.[1] ?? '';
+  const tableContext = /(?:from|join|update|into|table|delete\s+from)\s+[A-Za-z0-9_]*$/i.test(before);
+
+  return {
+    prefix,
+    tableContext,
+  };
+}
+
+function rankAndLimitCompletions(
+  items: Array<SandboxCompletionItem & { sortWeight: number; matchWeight: number }>,
+): SandboxCompletionItem[] {
+  return items
+    .sort((a, b) => {
+      if (a.matchWeight !== b.matchWeight) {
+        return a.matchWeight - b.matchWeight;
+      }
+      if (a.sortWeight !== b.sortWeight) {
+        return a.sortWeight - b.sortWeight;
+      }
+      return a.label.localeCompare(b.label);
+    })
+    .slice(0, 40)
+    .map((item) => ({
+      label: item.label,
+      detail: item.detail,
+      insertText: item.insertText,
+    }));
 }
 
 async function promptForConnection(existing?: ConnectionProfile): Promise<PromptResult | undefined> {
