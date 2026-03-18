@@ -358,7 +358,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const connectionId = queryContext.getCurrentConnectionId();
     const connection = connectionId ? connectionStore.get(connectionId) : undefined;
-    const connected = Boolean(connection && connectionManager.isConnected(connection.id));
+    let connected = Boolean(connection && connectionManager.isConnected(connection.id));
+
+    if (connection && !connected) {
+      try {
+        await connectionManager.connect(connection.id);
+        connected = true;
+      } catch {
+        connected = false;
+      }
+    }
 
     const cachedCatalog = connection ? completionCatalogCache.get(connection.id)?.catalog : undefined;
     const catalog = connection
@@ -406,20 +415,20 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
 
-    if (!contextInfo.qualifier) {
-      for (const keyword of SQL_KEYWORDS) {
-        addCandidate(
-          {
-            label: keyword,
-            detail: 'keyword',
-            insertText: `${keyword} `,
-          },
-          4,
-        );
-      }
-    }
-
     if (!catalog) {
+      if (!contextInfo.qualifier) {
+        for (const keyword of SQL_KEYWORDS) {
+          addCandidate(
+            {
+              label: keyword,
+              detail: 'keyword',
+              insertText: `${keyword} `,
+            },
+            5,
+          );
+        }
+      }
+
       return rankAndLimitCompletions(candidates);
     }
 
@@ -449,7 +458,17 @@ export function activate(context: vscode.ExtensionContext): void {
         continue;
       }
 
-      const objectPriority = object.kind === 'table' ? 0 : object.kind === 'view' ? 1 : 2;
+      const objectPriority = contextInfo.tableContext
+        ? object.kind === 'table'
+          ? -2
+          : object.kind === 'view'
+            ? -1
+            : 1
+        : object.kind === 'table'
+          ? 0
+          : object.kind === 'view'
+            ? 1
+            : 2;
       addCandidate(
         {
           label: object.name,
@@ -468,6 +487,19 @@ export function activate(context: vscode.ExtensionContext): void {
           },
           objectPriority + 1,
           object.name,
+        );
+      }
+    }
+
+    if (!contextInfo.qualifier && !contextInfo.tableContext) {
+      for (const keyword of SQL_KEYWORDS) {
+        addCandidate(
+          {
+            label: keyword,
+            detail: 'keyword',
+            insertText: `${keyword} `,
+          },
+          4,
         );
       }
     }
