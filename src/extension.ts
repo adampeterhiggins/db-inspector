@@ -145,8 +145,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const completionCatalogCache = new Map<string, { loadedAt: number; catalog: CompletionCatalog }>();
   const completionColumnsCache = new Map<string, { loadedAt: number; columns: ColumnInfo[] }>();
   const resultsPanel = new ResultsPanel({
-    onRunSandboxQuery: async (sql) => {
-      await executeSql(sql);
+    onRunSandboxQuery: async (sql, options) => {
+      await executeSql(sql, undefined, options);
     },
     onRequestCompletions: async (sql, cursor) => getSandboxCompletions(sql, cursor),
     getCurrentConnectionName: () => {
@@ -282,7 +282,11 @@ export function activate(context: vscode.ExtensionContext): void {
     return document;
   }
 
-  async function executeSql(sql: string, document?: vscode.TextDocument): Promise<void> {
+  async function executeSql(
+    sql: string,
+    document?: vscode.TextDocument,
+    options?: { replaceTabId?: string },
+  ): Promise<void> {
     const templatedSql = await renderSqlTemplateIfNeeded(sql);
     if (templatedSql === undefined) {
       return;
@@ -320,7 +324,7 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       await ensureConnected(connection);
       const result = await connectionManager.execute(connection.id, trimmedSql);
-      await resultsPanel.show(connection.name, trimmedSql, result);
+      await resultsPanel.show(connection.name, trimmedSql, result, options);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       void vscode.window.showErrorMessage(`DB Inspector query failed: ${message}`);

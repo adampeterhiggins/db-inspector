@@ -28,6 +28,7 @@ interface RenderState {
   title: string;
   connectionName: string;
   sql: string;
+  draftSql: string;
   result: QueryExecutionResult;
 }
 
@@ -62,13 +63,27 @@ interface UpdateScratchSqlMessage {
   sql?: unknown;
 }
 
+interface RunResultTabQueryMessage {
+  type: 'runResultTabQuery';
+  tabId?: unknown;
+  sql?: unknown;
+}
+
+interface UpdateResultTabSqlMessage {
+  type: 'updateResultTabSql';
+  tabId?: unknown;
+  sql?: unknown;
+}
+
 type ResultsPanelMessage =
   | RunSandboxQueryMessage
   | RequestCompletionsMessage
   | SelectResultTabMessage
   | CloseResultTabMessage
   | ActivateScratchTabMessage
-  | UpdateScratchSqlMessage;
+  | UpdateScratchSqlMessage
+  | RunResultTabQueryMessage
+  | UpdateResultTabSqlMessage;
 
 export interface SandboxCompletionItem {
   label: string;
@@ -77,7 +92,7 @@ export interface SandboxCompletionItem {
 }
 
 interface ResultsPanelOptions {
-  onRunSandboxQuery: (sql: string) => Promise<void>;
+  onRunSandboxQuery: (sql: string, options?: { replaceTabId?: string }) => Promise<void>;
   onRequestCompletions: (sql: string, cursor: number) => Promise<SandboxCompletionItem[]>;
   getCurrentConnectionName: () => string | undefined;
 }
@@ -98,12 +113,44 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
 
   constructor(private readonly options: ResultsPanelOptions) {}
 
-  async show(connectionName: string, sql: string, result: QueryExecutionResult): Promise<void> {
+  async show(
+    connectionName: string,
+    sql: string,
+    result: QueryExecutionResult,
+    options?: { replaceTabId?: string },
+  ): Promise<void> {
+    const replaceTabId = options?.replaceTabId;
+    if (replaceTabId) {
+      const replaceIndex = this.tabs.findIndex((item) => item.id === replaceTabId);
+      if (replaceIndex >= 0) {
+        const existing = this.tabs[replaceIndex];
+        this.tabs[replaceIndex] = {
+          ...existing,
+          title: this.createTabTitle(sql),
+          connectionName,
+          sql,
+          draftSql: sql,
+          result,
+        };
+        this.activeTabId = existing.id;
+        this.showScratchTab = false;
+
+        await vscode.commands.executeCommand(ResultsPanel.panelContainerCommand);
+        await vscode.commands.executeCommand(`${ResultsPanel.viewId}.focus`).then(
+          () => undefined,
+          () => undefined,
+        );
+        this.render();
+        return;
+      }
+    }
+
     const tab: RenderState = {
       id: this.nextTabId(),
       title: this.createTabTitle(sql),
       connectionName,
       sql,
+      draftSql: sql,
       result,
     };
     this.tabs.push(tab);
@@ -268,6 +315,42 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
       return;
     }
 
+    if (message?.type === 'updateResultTabSql') {
+      const tabId = typeof message.tabId === 'string' ? message.tabId : undefined;
+      const sql = typeof message.sql === 'string' ? message.sql : undefined;
+      if (!tabId || sql === undefined) {
+        return;
+      }
+
+      const tab = this.tabs.find((item) => item.id === tabId);
+      if (!tab) {
+        return;
+      }
+
+      tab.draftSql = sql;
+      return;
+    }
+
+    if (message?.type === 'runResultTabQuery') {
+      const tabId = typeof message.tabId === 'string' ? message.tabId : undefined;
+      const sql = typeof message.sql === 'string' ? message.sql.trim() : '';
+      if (!tabId || !sql) {
+        if (!sql) {
+          void vscode.window.showWarningMessage('No SQL to run.');
+        }
+        return;
+      }
+
+      const tab = this.tabs.find((item) => item.id === tabId);
+      if (tab) {
+        tab.draftSql = sql;
+        tab.title = this.createTabTitle(sql);
+      }
+
+      await this.options.onRunSandboxQuery(sql, { replaceTabId: tabId });
+      return;
+    }
+
     if (message?.type !== 'requestCompletions') {
       return;
     }
@@ -315,11 +398,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
       return;
     }
 
-    this.view.webview.html = this.renderHtml(
-      activeTab.connectionName,
-      activeTab.sql,
-      activeTab.result,
-    );
+    this.view.webview.html = this.renderHtml(activeTab);
   }
 
   private updateHasResultsContext(hasResults: boolean): void {
@@ -768,10 +847,10 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
     `;
   }
 
-  private renderHtml(connectionName: string, sql: string, result: QueryExecutionResult): string {
-    const rowsHtml = result.rows
+  private renderHtml(tab: RenderState): string {
+    const rowsHtml = tab.result.rows
       .map((row) => {
-        const cells = result.columns
+        const cells = tab.result.columns
           .map((column) => `<td>${renderCell((row as Record<string, unknown>)[column])}</td>`)
           .join('');
 
@@ -779,9 +858,9 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
       })
       .join('');
 
-    const columnsHtml = result.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join('');
+    const columnsHtml = tab.result.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join('');
 
-    const body = result.columns.length
+    const body = tab.result.columns.length
       ? `
         <div class="table-container">
           <table>
@@ -789,20 +868,20 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
               <tr>${columnsHtml}</tr>
             </thead>
             <tbody>
-              ${rowsHtml || `<tr><td colspan="${result.columns.length}"><span class="empty">No rows returned.</span></td></tr>`}
+              ${rowsHtml || `<tr><td colspan="${tab.result.columns.length}"><span class="empty">No rows returned.</span></td></tr>`}
             </tbody>
           </table>
         </div>
       `
-      : `<p class="empty">${escapeHtml(result.message ?? 'Statement completed.')}</p>`;
+      : `<p class="empty">${escapeHtml(tab.result.message ?? 'Statement completed.')}</p>`;
 
     const statusBlock = this.showStatus
       ? `
         <div class="status-strip">
-          <span><strong>Connection:</strong> ${escapeHtml(connectionName)}</span>
-          <span><strong>Rows:</strong> ${result.rowCount}</span>
-          <span><strong>Duration:</strong> ${result.durationMs} ms</span>
-          ${result.message ? `<span><strong>Message:</strong> ${escapeHtml(result.message)}</span>` : ''}
+          <span><strong>Connection:</strong> ${escapeHtml(tab.connectionName)}</span>
+          <span><strong>Rows:</strong> ${tab.result.rowCount}</span>
+          <span><strong>Duration:</strong> ${tab.result.durationMs} ms</span>
+          ${tab.result.message ? `<span><strong>Message:</strong> ${escapeHtml(tab.result.message)}</span>` : ''}
         </div>
       `
       : '';
@@ -810,7 +889,10 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
     const queryBlock = this.showQuery
       ? `
         <div class="query-block">
-          <pre>${escapeHtml(sql.trim())}</pre>
+          <textarea id="result-tab-query" spellcheck="false">${escapeHtml(tab.draftSql)}</textarea>
+          <div class="query-actions">
+            <button id="result-tab-run" type="button">Run In Current Tab</button>
+          </div>
         </div>
       `
       : '';
@@ -907,12 +989,42 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             padding: 10px;
             margin-bottom: 10px;
             font-size: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
           }
 
-          .query-block pre {
-            margin: 0;
-            white-space: pre-wrap;
-            word-break: break-word;
+          .query-block textarea {
+            width: 100%;
+            min-height: 68px;
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            padding: 8px;
+            font-family: inherit;
+            resize: vertical;
+            line-height: 1.35;
+          }
+
+          .query-actions {
+            display: flex;
+            justify-content: flex-end;
+          }
+
+          .query-actions button {
+            border: none;
+            border-radius: 4px;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            padding: 5px 10px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+          }
+
+          .query-actions button:hover {
+            background: var(--vscode-button-hoverBackground);
           }
 
           .table-container {
@@ -971,6 +1083,44 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         ${statusBlock}
         ${queryBlock}
         ${body}
+        <script>
+          (() => {
+            const textarea = document.getElementById('result-tab-query');
+            const runButton = document.getElementById('result-tab-run');
+            if (!textarea || !runButton) {
+              return;
+            }
+
+            const tabId = '${escapeHtml(tab.id)}';
+            const vscodeApi = window.__dbInspectorVscode || acquireVsCodeApi();
+            window.__dbInspectorVscode = vscodeApi;
+
+            const run = () => {
+              vscodeApi.postMessage({
+                type: 'runResultTabQuery',
+                tabId,
+                sql: textarea.value,
+              });
+            };
+
+            textarea.addEventListener('input', () => {
+              vscodeApi.postMessage({
+                type: 'updateResultTabSql',
+                tabId,
+                sql: textarea.value,
+              });
+            });
+
+            textarea.addEventListener('keydown', (event) => {
+              if ((event.metaKey || event.ctrlKey || event.shiftKey) && event.key === 'Enter') {
+                event.preventDefault();
+                run();
+              }
+            });
+
+            runButton.addEventListener('click', run);
+          })();
+        </script>
         ${this.renderTabsScript()}
       </body>
       </html>
