@@ -163,6 +163,10 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: explorerProvider,
     showCollapseAll: true,
   });
+  const panelConnectionsView = vscode.window.createTreeView('dbInspector.panelConnectionsView', {
+    treeDataProvider: explorerProvider,
+    showCollapseAll: true,
+  });
 
   const codeLensProvider = new SqlQueryCodeLensProvider(() =>
     vscode.workspace.getConfiguration('dbInspector').get<boolean>('enableQueryCodeLens', true),
@@ -178,7 +182,13 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   );
 
-  context.subscriptions.push(treeView, queryContext, codeLensRegistration, resultsViewRegistration);
+  context.subscriptions.push(
+    treeView,
+    panelConnectionsView,
+    queryContext,
+    codeLensRegistration,
+    resultsViewRegistration,
+  );
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
