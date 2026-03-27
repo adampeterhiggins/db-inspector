@@ -24,6 +24,8 @@ function renderCell(value: unknown): string {
 }
 
 interface RenderState {
+  id: string;
+  title: string;
   connectionName: string;
   sql: string;
   result: QueryExecutionResult;
@@ -41,7 +43,32 @@ interface RequestCompletionsMessage {
   cursor?: unknown;
 }
 
-type ResultsPanelMessage = RunSandboxQueryMessage | RequestCompletionsMessage;
+interface SelectResultTabMessage {
+  type: 'selectResultTab';
+  tabId?: unknown;
+}
+
+interface CloseResultTabMessage {
+  type: 'closeResultTab';
+  tabId?: unknown;
+}
+
+interface ActivateScratchTabMessage {
+  type: 'activateScratchTab';
+}
+
+interface UpdateScratchSqlMessage {
+  type: 'updateScratchSql';
+  sql?: unknown;
+}
+
+type ResultsPanelMessage =
+  | RunSandboxQueryMessage
+  | RequestCompletionsMessage
+  | SelectResultTabMessage
+  | CloseResultTabMessage
+  | ActivateScratchTabMessage
+  | UpdateScratchSqlMessage;
 
 export interface SandboxCompletionItem {
   label: string;
@@ -61,18 +88,27 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
   private static readonly hasResultsContextKey = 'dbInspector.resultsHasData';
 
   private view: vscode.WebviewView | undefined;
-  private latest: RenderState | undefined;
+  private readonly tabs: RenderState[] = [];
+  private activeTabId: string | undefined;
+  private showScratchTab = true;
+  private scratchSql = 'SELECT 1;';
+  private tabCounter = 0;
   private showStatus = false;
   private showQuery = false;
 
   constructor(private readonly options: ResultsPanelOptions) {}
 
   async show(connectionName: string, sql: string, result: QueryExecutionResult): Promise<void> {
-    this.latest = {
+    const tab: RenderState = {
+      id: this.nextTabId(),
+      title: this.createTabTitle(sql),
       connectionName,
       sql,
       result,
     };
+    this.tabs.push(tab);
+    this.activeTabId = tab.id;
+    this.showScratchTab = false;
 
     await vscode.commands.executeCommand(ResultsPanel.panelContainerCommand);
 
@@ -86,13 +122,52 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
   }
 
   clear(): void {
-    this.latest = undefined;
-    this.updateHasResultsContext(false);
+    const activeTab = this.getActiveTab();
+    if (!activeTab) {
+      this.showScratchTab = true;
+      this.updateHasResultsContext(false);
+      this.render();
+      return;
+    }
+
+    const index = this.tabs.findIndex((item) => item.id === activeTab.id);
+    if (index >= 0) {
+      this.tabs.splice(index, 1);
+    }
+
+    const fallback = this.tabs[Math.max(0, index - 1)] ?? this.tabs[this.tabs.length - 1];
+    this.activeTabId = fallback?.id;
+    this.showScratchTab = this.tabs.length === 0;
+    this.updateHasResultsContext(this.tabs.length > 0);
     this.render();
   }
 
   getLatest(): RenderState | undefined {
-    return this.latest;
+    if (this.showScratchTab) {
+      return undefined;
+    }
+    return this.getActiveTab();
+  }
+
+  private nextTabId(): string {
+    this.tabCounter += 1;
+    return `result-${this.tabCounter}`;
+  }
+
+  private getActiveTab(): RenderState | undefined {
+    if (!this.activeTabId) {
+      return this.tabs[this.tabs.length - 1];
+    }
+    return this.tabs.find((item) => item.id === this.activeTabId) ?? this.tabs[this.tabs.length - 1];
+  }
+
+  private createTabTitle(sql: string): string {
+    const normalized = sql.replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+      return `Query ${this.tabs.length + 1}`;
+    }
+
+    return normalized.length > 48 ? `${normalized.slice(0, 45)}...` : normalized;
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -133,7 +208,63 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         return;
       }
 
+      this.scratchSql = sql;
       await this.options.onRunSandboxQuery(sql);
+      return;
+    }
+
+    if (message?.type === 'selectResultTab') {
+      const tabId = typeof message.tabId === 'string' ? message.tabId : undefined;
+      if (!tabId) {
+        return;
+      }
+
+      const tab = this.tabs.find((item) => item.id === tabId);
+      if (!tab) {
+        return;
+      }
+
+      this.activeTabId = tab.id;
+      this.showScratchTab = false;
+      this.render();
+      return;
+    }
+
+    if (message?.type === 'closeResultTab') {
+      const tabId = typeof message.tabId === 'string' ? message.tabId : undefined;
+      if (!tabId) {
+        return;
+      }
+
+      const index = this.tabs.findIndex((item) => item.id === tabId);
+      if (index < 0) {
+        return;
+      }
+
+      const wasActive = this.activeTabId === tabId;
+      this.tabs.splice(index, 1);
+
+      if (wasActive) {
+        const fallback = this.tabs[Math.max(0, index - 1)] ?? this.tabs[this.tabs.length - 1];
+        this.activeTabId = fallback?.id;
+        this.showScratchTab = this.tabs.length === 0;
+      }
+
+      if (this.tabs.length === 0) {
+        this.showScratchTab = true;
+      }
+      this.render();
+      return;
+    }
+
+    if (message?.type === 'activateScratchTab') {
+      this.showScratchTab = true;
+      this.render();
+      return;
+    }
+
+    if (message?.type === 'updateScratchSql') {
+      this.scratchSql = typeof message.sql === 'string' ? message.sql : this.scratchSql;
       return;
     }
 
@@ -167,26 +298,91 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
   }
 
   private render(): void {
-    this.updateHasResultsContext(Boolean(this.latest));
+    this.updateHasResultsContext(this.tabs.length > 0);
 
     if (!this.view) {
       return;
     }
 
-    if (!this.latest) {
+    if (this.showScratchTab || this.tabs.length === 0) {
+      this.view.webview.html = this.renderEmptyHtml();
+      return;
+    }
+
+    const activeTab = this.getActiveTab();
+    if (!activeTab) {
       this.view.webview.html = this.renderEmptyHtml();
       return;
     }
 
     this.view.webview.html = this.renderHtml(
-      this.latest.connectionName,
-      this.latest.sql,
-      this.latest.result,
+      activeTab.connectionName,
+      activeTab.sql,
+      activeTab.result,
     );
   }
 
   private updateHasResultsContext(hasResults: boolean): void {
     void vscode.commands.executeCommand('setContext', ResultsPanel.hasResultsContextKey, hasResults);
+  }
+
+  private renderTabsMarkup(): string {
+    const tabButtons = this.tabs
+      .map((tab) => {
+        const activeClass = !this.showScratchTab && tab.id === this.activeTabId ? 'active' : '';
+        return `
+          <button type="button" class="tab-button ${activeClass}" data-tab-id="${escapeHtml(tab.id)}" title="${escapeHtml(tab.title)}">
+            <span class="tab-label">${escapeHtml(tab.title)}</span>
+            <span class="tab-close" data-close-tab-id="${escapeHtml(tab.id)}">×</span>
+          </button>
+        `;
+      })
+      .join('');
+
+    const scratchActiveClass = this.showScratchTab ? 'active' : '';
+    return `
+      <div class="tabs-row">
+        ${tabButtons}
+        <button type="button" class="tab-button scratch-tab ${scratchActiveClass}" data-activate-scratch-tab="true">+ New Query</button>
+      </div>
+    `;
+  }
+
+  private renderTabsScript(): string {
+    return `
+      <script>
+        (() => {
+          const vscodeApi = window.__dbInspectorVscode || acquireVsCodeApi();
+          window.__dbInspectorVscode = vscodeApi;
+
+          document.querySelectorAll('[data-tab-id]').forEach((tabButton) => {
+            tabButton.addEventListener('click', () => {
+              vscodeApi.postMessage({
+                type: 'selectResultTab',
+                tabId: tabButton.getAttribute('data-tab-id')
+              });
+            });
+          });
+
+          document.querySelectorAll('[data-close-tab-id]').forEach((closeButton) => {
+            closeButton.addEventListener('click', (event) => {
+              event.stopPropagation();
+              vscodeApi.postMessage({
+                type: 'closeResultTab',
+                tabId: closeButton.getAttribute('data-close-tab-id')
+              });
+            });
+          });
+
+          const scratchButton = document.querySelector('[data-activate-scratch-tab]');
+          if (scratchButton) {
+            scratchButton.addEventListener('click', () => {
+              vscodeApi.postMessage({ type: 'activateScratchTab' });
+            });
+          }
+        })();
+      </script>
+    `;
   }
 
   private renderEmptyHtml(): string {
@@ -222,7 +418,48 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
           body {
             display: flex;
             flex-direction: column;
-            justify-content: center;
+            gap: 10px;
+          }
+
+          .tabs-row {
+            display: flex;
+            gap: 4px;
+            overflow-x: auto;
+            padding-bottom: 4px;
+          }
+
+          .tab-button {
+            border: 1px solid var(--vscode-widget-border);
+            border-radius: 6px;
+            background: var(--vscode-editor-background);
+            color: var(--vscode-foreground);
+            padding: 4px 8px;
+            display: inline-flex;
+            gap: 8px;
+            align-items: center;
+            max-width: 260px;
+          }
+
+          .tab-button.active {
+            background: var(--vscode-list-activeSelectionBackground);
+            color: var(--vscode-list-activeSelectionForeground);
+            border-color: transparent;
+          }
+
+          .tab-label {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
+          .tab-close {
+            font-weight: 700;
+            cursor: pointer;
+            opacity: 0.75;
+          }
+
+          .scratch-tab {
+            font-size: 12px;
           }
 
           .card {
@@ -318,7 +555,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             text-overflow: ellipsis;
           }
 
-          button {
+          .actions > button {
             border: none;
             border-radius: 4px;
             background: var(--vscode-button-background);
@@ -328,7 +565,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             font-family: inherit;
           }
 
-          button:hover {
+          .actions > button:hover {
             background: var(--vscode-button-hoverBackground);
           }
 
@@ -344,11 +581,12 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         </style>
       </head>
       <body>
+        ${this.renderTabsMarkup()}
         <div class="card">
           <div class="hint">Run a SQL query to show results here.</div>
           <div class="hint">${connectionLabel}</div>
           <div class="editor-wrap">
-            <textarea id="sandbox-query" spellcheck="false" placeholder="SELECT 1;"></textarea>
+            <textarea id="sandbox-query" spellcheck="false" placeholder="SELECT 1;">${escapeHtml(this.scratchSql)}</textarea>
             <div id="autocomplete-menu" class="autocomplete-menu"></div>
           </div>
           <div class="actions">
@@ -357,7 +595,8 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
           </div>
         </div>
         <script>
-          const vscode = acquireVsCodeApi();
+          const vscode = window.__dbInspectorVscode || acquireVsCodeApi();
+          window.__dbInspectorVscode = vscode;
           const input = document.getElementById('sandbox-query');
           const runButton = document.getElementById('run-query');
           const menu = document.getElementById('autocomplete-menu');
@@ -438,6 +677,10 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
 
           runButton.addEventListener('click', run);
           input.addEventListener('input', () => {
+            vscode.postMessage({
+              type: 'updateScratchSql',
+              sql: input.value
+            });
             scheduleCompletions();
           });
           input.addEventListener('keydown', (event) => {
@@ -519,6 +762,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             renderCompletions();
           });
         </script>
+        ${this.renderTabsScript()}
       </body>
       </html>
     `;
@@ -599,6 +843,48 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            gap: 10px;
+          }
+
+          .tabs-row {
+            display: flex;
+            gap: 4px;
+            overflow-x: auto;
+            flex: 0 0 auto;
+          }
+
+          .tab-button {
+            border: 1px solid var(--vscode-widget-border);
+            border-radius: 6px;
+            background: var(--vscode-editor-background);
+            color: var(--vscode-foreground);
+            padding: 4px 8px;
+            display: inline-flex;
+            gap: 8px;
+            align-items: center;
+            max-width: 300px;
+            cursor: pointer;
+          }
+
+          .tab-button.active {
+            background: var(--vscode-list-activeSelectionBackground);
+            color: var(--vscode-list-activeSelectionForeground);
+            border-color: transparent;
+          }
+
+          .tab-label {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
+          .tab-close {
+            font-weight: 700;
+            opacity: 0.75;
+          }
+
+          .scratch-tab {
+            font-size: 12px;
           }
 
           .status-strip {
@@ -681,9 +967,11 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         </style>
       </head>
       <body>
+        ${this.renderTabsMarkup()}
         ${statusBlock}
         ${queryBlock}
         ${body}
+        ${this.renderTabsScript()}
       </body>
       </html>
     `;
