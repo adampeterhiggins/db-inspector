@@ -762,6 +762,17 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
+    vscode.commands.registerCommand('dbInspector.rerunResultsQuery', async () => {
+      const latest = resultsPanel.getLatest();
+      if (!latest) {
+        void vscode.window.showWarningMessage('No query results to rerun.');
+        return;
+      }
+
+      const sql = latest.draftSql?.trim() ? latest.draftSql : latest.sql;
+      await executeSql(sql, undefined, { replaceTabId: latest.id });
+    }),
+
     vscode.commands.registerCommand('dbInspector.downloadResults', async () => {
       const latest = resultsPanel.getLatest();
       if (!latest) {
